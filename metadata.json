@@ -1,0 +1,6 @@
+{
+  "name": "MacroMate",
+  "description": "An AI-powered nutritional concierge that helps users find meals matching their macro goals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
