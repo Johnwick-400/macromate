@@ -4,6 +4,43 @@ MacroMate is a high-fidelity, premium native Android application built with **Ko
 
 ---
 
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/signup.png" width="240" alt="Sign Up screen" /><br />
+      <sub><b>Sign Up</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/onboarding-goal.png" width="240" alt="Onboarding goal selection" /><br />
+      <sub><b>Onboarding — Goal Selection</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/chat-results.png" width="240" alt="AI chat macro discovery results" /><br />
+      <sub><b>AI Chat — Macro Discovery</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/cart.png" width="240" alt="Swiggy basket / cart screen" /><br />
+      <sub><b>Basket / Cart</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/tracker.png" width="240" alt="Daily and weekly macro tracker" /><br />
+      <sub><b>Daily &amp; Weekly Tracker</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/profile.png" width="240" alt="Profile and order history screen" /><br />
+      <sub><b>Profile &amp; Order History</b></sub>
+    </td>
+  </tr>
+</table>
+
+See [`MacroMate_Documentation.pdf`](MacroMate_Documentation.pdf) for the full product & technical write-up, including every screen and state.
+
+---
+
 ## 🎨 Creative Vibe & Design Concept
 MacroMate is styled with our **"Neon Emerald & Slate" Athletic Theme**:
 *   **Deep Navy-Slate Elements (`#0F172A`)** to ensure excellent contrast and prevent visual fatigue.
