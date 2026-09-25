@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.MacroMateDatabase
@@ -8,7 +9,9 @@ import com.example.data.model.*
 import android.content.Intent
 import android.net.Uri
 import com.example.data.repository.AgentState
+import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.MacroMateRepository
+import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
 import com.example.data.repository.SwiggyClient
 import com.example.data.repository.SwiggyMcpClient
@@ -35,9 +38,24 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
     private val _swiggyStatus = MutableStateFlow<String?>(null)
     val swiggyStatus: StateFlow<String?> = _swiggyStatus.asStateFlow()
 
+    private val _activeSwiggyAddress = MutableStateFlow<String?>(null)
+    val activeSwiggyAddress: StateFlow<String?> = _activeSwiggyAddress.asStateFlow()
+
+    private val _swiggyAddresses = MutableStateFlow<List<SwiggyAddress>>(emptyList())
+    val swiggyAddresses: StateFlow<List<SwiggyAddress>> = _swiggyAddresses.asStateFlow()
+
+    private val _swiggyAddressesHasMore = MutableStateFlow(false)
+    val swiggyAddressesHasMore: StateFlow<Boolean> = _swiggyAddressesHasMore.asStateFlow()
+
+    private val _swiggyAddressesLoading = MutableStateFlow(false)
+    val swiggyAddressesLoading: StateFlow<Boolean> = _swiggyAddressesLoading.asStateFlow()
+
+    private var swiggyAddressPage = 1
+
     init {
         SwiggyMcpClient.init(application)
         _swiggyLinked.value = SwiggyMcpClient.isConnected()
+        _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
     }
 
     fun connectSwiggy() {
@@ -49,6 +67,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
             _swiggyLinked.value = SwiggyMcpClient.isConnected()
+            _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
             _swiggyStatus.value = result.fold(
                 onSuccess = { "Connected! The concierge now searches real Swiggy restaurants." },
                 onFailure = { it.message ?: "Connection failed. Try again." }
@@ -60,6 +79,36 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         SwiggyMcpClient.disconnect()
         _swiggyLinked.value = false
         _swiggyStatus.value = null
+        _activeSwiggyAddress.value = null
+        _swiggyAddresses.value = emptyList()
+    }
+
+    /** Loads (or reloads) the saved-address picker list. [reset] starts back at page 1. */
+    fun loadSwiggyAddresses(reset: Boolean = true) {
+        if (!SwiggyMcpClient.isConnected()) return
+        viewModelScope.launch {
+            if (reset) {
+                swiggyAddressPage = 1
+                _swiggyAddresses.value = emptyList()
+            }
+            _swiggyAddressesLoading.value = true
+            try {
+                val page = SwiggyMcpClient.fetchAddresses(swiggyAddressPage)
+                _swiggyAddresses.value = _swiggyAddresses.value + page.addresses
+                _swiggyAddressesHasMore.value = page.hasMore
+                swiggyAddressPage++
+            } catch (e: Exception) {
+                _swiggyStatus.value = e.message ?: "Couldn't load your saved addresses."
+            } finally {
+                _swiggyAddressesLoading.value = false
+            }
+        }
+    }
+
+    /** Switches the active delivery address; subsequent restaurant searches resolve against it. */
+    fun selectSwiggyAddress(address: SwiggyAddress) {
+        SwiggyMcpClient.setActiveAddress(address)
+        _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
     }
 
     // --- SharedPreferences & Current User ---
@@ -402,6 +451,10 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         _activeResults.update { current -> current.filter { it.id != dishId } }
     }
 
+    fun clearResults() {
+        _activeResults.value = emptyList()
+    }
+
     // --- Cart Actions ---
     fun addItemToCart(dish: DishItem) {
         _cart.update { current ->
@@ -456,10 +509,12 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         return cart.value.sumOf { it.dish.price * it.quantity }
     }
 
-    fun confirmCartAndPlaceOrder() {
+    /** [onComplete] reports whether the cart was actually pushed to the user's real Swiggy
+     *  cart (true) vs. only logged locally (false — not connected, or the sync call failed). */
+    fun confirmCartAndPlaceOrder(onComplete: (syncedToSwiggy: Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val items = cart.value
-            if (items.isEmpty()) return@launch
+            if (items.isEmpty()) { onComplete(false); return@launch }
 
             val totalMacros = getCartMacros()
             val totalPrice = getCartTotal()
@@ -505,15 +560,41 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 repository.saveMacroLog(logs)
             }
 
-            // 4. Clear Cart
+            // 4. Push items into the user's real Swiggy cart so the deep-link opens a
+            // populated cart instead of the app's home screen. Swiggy carts are single-
+            // restaurant, so when items span restaurants, sync the largest group.
+            var syncedToSwiggy = false
+            if (SwiggyMcpClient.isConnected()) {
+                val largestRestaurant = items.groupBy { it.dish.restaurantId }
+                    .filterKeys { it.isNotBlank() }
+                    .maxByOrNull { it.value.size }
+                if (largestRestaurant != null) {
+                    try {
+                        SwiggyMcpClient.updateCart(
+                            restaurantId = largestRestaurant.key,
+                            restaurantName = largestRestaurant.value.first().dish.restaurantName,
+                            items = largestRestaurant.value.map { it.dish.id to it.quantity }
+                        )
+                        syncedToSwiggy = true
+                    } catch (e: Exception) {
+                        Log.w("MacroMateViewModel", "Failed to sync cart to Swiggy", e)
+                    }
+                }
+            }
+
+            // 5. Clear Cart
             clearCart()
 
             _chatMessages.update { old ->
                 old + ChatMessage(
                     sender = "SYSTEM",
-                    content = "🎉 Swiggy Cart Synced! Ordered synced to Swiggy client successfully under ID: $swiggyId. Meals logged to your daily Macro tracker."
+                    content = if (syncedToSwiggy)
+                        "🎉 Swiggy Cart Synced! Your items are in your real Swiggy cart, ready to check out. Meals logged to your daily Macro tracker."
+                    else
+                        "Order logged locally under ID: $swiggyId. Connect your Swiggy account in Profile to sync items to your real Swiggy cart. Meals logged to your daily Macro tracker."
                 )
             }
+            onComplete(syncedToSwiggy)
         }
     }
 
@@ -523,41 +604,22 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     data class FoodImageEstimate(val macros: ConsumedMacros, val suggestedName: String?)
 
+    private val imagePrompt = "Identify the food in this photo and estimate its total nutrition for the visible portion."
+
     /**
-     * Estimates macros from a photo of food via Gemini vision, so logging a home-cooked or
-     * restaurant meal doesn't require typing a description either — just a picture.
-     * Calls back with null if no API key is configured or estimation fails — caller falls back
-     * to manual entry, same contract as [estimateMacrosFromDescription].
+     * Estimates macros from a photo of food, so logging a home-cooked or restaurant meal
+     * doesn't require typing a description either — just a picture. Three tiers, tried in
+     * order, each falling through to the next on any failure or unavailability:
+     * 1. On-device Gemini Nano (private, free, works offline — if the device supports it)
+     * 2. Cloud Gemini vision (if GEMINI_API_KEY is configured)
+     * 3. null — caller falls back to manual entry, same contract as [estimateMacrosFromDescription]
      */
     fun estimateMacrosFromImage(bitmap: android.graphics.Bitmap, onResult: (FoodImageEstimate?) -> Unit) {
         viewModelScope.launch {
             _isEstimatingMacros.value = true
             val result = try {
-                if (!RestGeminiClient.isApiKeyAvailable()) {
-                    null
-                } else {
-                    val imageBytes = java.io.ByteArrayOutputStream().use { stream ->
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
-                        stream.toByteArray()
-                    }
-                    val json = RestGeminiClient.generateJsonFromImage(
-                        imageBytes = imageBytes,
-                        prompt = "Identify the food in this photo and estimate its total nutrition for the visible portion.\n" +
-                                "Return JSON: {\"foodName\": \"...\", \"calories\": 320, \"proteinG\": 20, \"carbsG\": 30, \"fatG\": 10}",
-                        systemInstruction = "You are a nutritionist estimating meal macros from a food photo. Respond with JSON only."
-                    )
-                    json?.let {
-                        FoodImageEstimate(
-                            macros = ConsumedMacros(
-                                calories = it.optInt("calories", 0),
-                                protein = it.optInt("proteinG", 0),
-                                carbs = it.optInt("carbsG", 0),
-                                fat = it.optInt("fatG", 0)
-                            ),
-                            suggestedName = it.optString("foodName").takeIf { name -> name.isNotBlank() }
-                        )
-                    }
-                }
+                GeminiNanoClient.estimateMacrosFromImage(bitmap, imagePrompt)?.toFoodImageEstimate()
+                    ?: estimateMacrosFromImageViaCloud(bitmap)
             } catch (e: Exception) {
                 null
             }
@@ -566,11 +628,40 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private suspend fun estimateMacrosFromImageViaCloud(bitmap: android.graphics.Bitmap): FoodImageEstimate? {
+        if (!RestGeminiClient.isApiKeyAvailable()) return null
+        val imageBytes = java.io.ByteArrayOutputStream().use { stream ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
+            stream.toByteArray()
+        }
+        val json = RestGeminiClient.generateJsonFromImage(
+            imageBytes = imageBytes,
+            prompt = "$imagePrompt\n" +
+                    "Return JSON: {\"foodName\": \"...\", \"calories\": 320, \"proteinG\": 20, \"carbsG\": 30, \"fatG\": 10}",
+            systemInstruction = "You are a nutritionist estimating meal macros from a food photo. Respond with JSON only."
+        )
+        return json?.let {
+            FoodImageEstimate(
+                macros = ConsumedMacros(
+                    calories = it.optInt("calories", 0),
+                    protein = it.optInt("proteinG", 0),
+                    carbs = it.optInt("carbsG", 0),
+                    fat = it.optInt("fatG", 0)
+                ),
+                suggestedName = it.optString("foodName").takeIf { name -> name.isNotBlank() }
+            )
+        }
+    }
+
+    private fun NanoFoodEstimate.toFoodImageEstimate() = FoodImageEstimate(
+        macros = ConsumedMacros(calories = calories, protein = proteinG, carbs = carbsG, fat = fatG),
+        suggestedName = foodName?.takeIf { it.isNotBlank() }
+    )
+
     /**
-     * Estimates macros for a free-text food description (e.g. "2 idlis and sambar") via Gemini,
-     * so manual logging doesn't require the user to already know the exact macro numbers.
-     * Calls back with null if no API key is configured or estimation fails — caller falls back
-     * to manual entry.
+     * Estimates macros for a free-text food description (e.g. "2 idlis and sambar"), so manual
+     * logging doesn't require the user to already know the exact macro numbers. Same three-tier
+     * fallback as [estimateMacrosFromImage]: on-device Gemini Nano -> cloud Gemini -> null.
      */
     fun estimateMacrosFromDescription(description: String, onResult: (ConsumedMacros?) -> Unit) {
         if (description.isBlank()) {
@@ -579,30 +670,33 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
         viewModelScope.launch {
             _isEstimatingMacros.value = true
+            val prompt = "Estimate total nutrition for this food description: \"$description\". " +
+                    "Assume typical single-serving portion sizes unless stated otherwise."
             val result = try {
-                if (!RestGeminiClient.isApiKeyAvailable()) {
-                    null
-                } else {
-                    val json = RestGeminiClient.generateJson(
-                        prompt = "Estimate total nutrition for this food description: \"$description\". " +
-                                "Assume typical single-serving portion sizes unless stated otherwise.\n" +
-                                "Return JSON: {\"calories\": 320, \"proteinG\": 20, \"carbsG\": 30, \"fatG\": 10}",
-                        systemInstruction = "You are a nutritionist estimating meal macros from a plain-language description. Respond with JSON only."
-                    )
-                    json?.let {
-                        ConsumedMacros(
-                            calories = it.optInt("calories", 0),
-                            protein = it.optInt("proteinG", 0),
-                            carbs = it.optInt("carbsG", 0),
-                            fat = it.optInt("fatG", 0)
-                        )
-                    }
-                }
+                GeminiNanoClient.estimateMacrosFromText(prompt)?.let {
+                    ConsumedMacros(calories = it.calories, protein = it.proteinG, carbs = it.carbsG, fat = it.fatG)
+                } ?: estimateMacrosFromDescriptionViaCloud(prompt)
             } catch (e: Exception) {
                 null
             }
             _isEstimatingMacros.value = false
             onResult(result)
+        }
+    }
+
+    private suspend fun estimateMacrosFromDescriptionViaCloud(prompt: String): ConsumedMacros? {
+        if (!RestGeminiClient.isApiKeyAvailable()) return null
+        val json = RestGeminiClient.generateJson(
+            prompt = "$prompt\nReturn JSON: {\"calories\": 320, \"proteinG\": 20, \"carbsG\": 30, \"fatG\": 10}",
+            systemInstruction = "You are a nutritionist estimating meal macros from a plain-language description. Respond with JSON only."
+        )
+        return json?.let {
+            ConsumedMacros(
+                calories = it.optInt("calories", 0),
+                protein = it.optInt("proteinG", 0),
+                carbs = it.optInt("carbsG", 0),
+                fat = it.optInt("fatG", 0)
+            )
         }
     }
 

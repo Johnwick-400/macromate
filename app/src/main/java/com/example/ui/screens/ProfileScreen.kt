@@ -235,83 +235,12 @@ fun ProfileScreen(
                 }
             }
 
-            // Section 2: LLM Provider Toggle
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = SlateCard)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "AI ENGINE CONCIERGE CONFIG",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = OrangeSwiggy,
-                            letterSpacing = 1.2.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Select your priority AI model engine. MacroMate redirects prompt matrices to selected endpoint.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Segmented Tab Button Emulation
-                        val currentProvider = profile?.llmProvider ?: "Gemini"
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
-                                .clip(RoundedCornerShape(8.dp))
-                        ) {
-                            // Gemini Segment
-                            val isGemini = currentProvider == "Gemini"
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(if (isGemini) NeonEmerald else Color.Transparent)
-                                    .clickable { viewModel.setLlmProvider("Gemini") }
-                                    .fillMaxHeight(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Gemini Flash (Built-in)",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (isGemini) Color.White else TextPrimary
-                                )
-                            }
-
-                            // Claude Segment
-                            val isClaude = currentProvider == "Claude"
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(if (isClaude) OrangeSwiggy else Color.Transparent)
-                                    .clickable { viewModel.setLlmProvider("Claude") }
-                                    .fillMaxHeight(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Claude Sonnet v3.5",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (isClaude) Color.White else TextPrimary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
             // Section: Swiggy MCP Live Connection
             item {
                 val swiggyLinked by viewModel.swiggyLinked.collectAsState()
                 val swiggyStatus by viewModel.swiggyStatus.collectAsState()
+                val activeAddress by viewModel.activeSwiggyAddress.collectAsState()
+                var showAddressPicker by remember { mutableStateOf(false) }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -345,6 +274,42 @@ fun ProfileScreen(
                             )
                         }
 
+                        if (swiggyLinked) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SlateDark)
+                                    .clickable {
+                                        viewModel.loadSwiggyAddresses()
+                                        showAddressPicker = true
+                                    }
+                                    .testTag("swiggy_address_row")
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = NeonEmerald,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Delivering to", fontSize = 10.sp, color = TextHint)
+                                    Text(
+                                        text = activeAddress ?: "Choose an address",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary,
+                                        maxLines = 1
+                                    )
+                                }
+                                Text("Change", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonEmerald)
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {
@@ -364,6 +329,13 @@ fun ProfileScreen(
                             )
                         }
                     }
+                }
+
+                if (showAddressPicker) {
+                    SwiggyAddressPickerDialog(
+                        viewModel = viewModel,
+                        onDismiss = { showAddressPicker = false }
+                    )
                 }
             }
 
@@ -480,6 +452,73 @@ fun ProfileScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SwiggyAddressPickerDialog(
+    viewModel: MacroMateViewModel,
+    onDismiss: () -> Unit
+) {
+    val addresses by viewModel.swiggyAddresses.collectAsState()
+    val loading by viewModel.swiggyAddressesLoading.collectAsState()
+    val hasMore by viewModel.swiggyAddressesHasMore.collectAsState()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SlateCard,
+        title = { Text("Choose delivery address", fontWeight = FontWeight.Bold, color = TextPrimary) },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 360.dp)) {
+                if (addresses.isEmpty() && loading) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = NeonEmerald)
+                    }
+                } else if (addresses.isEmpty()) {
+                    Text(
+                        "No saved addresses found on this Swiggy account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(addresses, key = { it.id }) { address ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        viewModel.selectSwiggyAddress(address)
+                                        onDismiss()
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 8.dp)
+                            ) {
+                                Column {
+                                    Text(address.label, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextPrimary)
+                                    if (address.line.isNotBlank()) {
+                                        Text(address.line, fontSize = 12.sp, color = TextSecondary, maxLines = 2)
+                                    }
+                                }
+                            }
+                        }
+                        if (hasMore) {
+                            item {
+                                TextButton(
+                                    onClick = { viewModel.loadSwiggyAddresses(reset = false) },
+                                    enabled = !loading,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (loading) "Loading…" else "Load more", color = NeonEmerald)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) }
+        }
+    )
 }
 
 // Order History Item UI view list components

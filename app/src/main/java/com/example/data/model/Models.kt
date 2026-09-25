@@ -92,6 +92,12 @@ data class CartItem(
     var quantity: Int
 )
 
+data class SwiggyAddress(
+    val id: String,
+    val label: String,
+    val line: String
+)
+
 data class ChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val sender: String = "AI", // "USER" or "AI" or "SYSTEM" or "THINKING"
