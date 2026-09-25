@@ -15,6 +15,7 @@ import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
 import com.example.data.repository.SwiggyClient
 import com.example.data.repository.SwiggyMcpClient
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -128,14 +129,31 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    // Emits current yyyy-MM-dd, re-checking each minute so the tracker rolls over at midnight
+    // even while the app stays open. distinctUntilChanged → only re-emits when the date changes.
+    private fun todayString(): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    private val currentDate: StateFlow<String> = flow {
+        while (true) {
+            emit(todayString())
+            delay(60_000L)
+        }
+    }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), todayString())
+
     // --- Macro Log State (Today) ---
+    // Combined with currentDate so a midnight rollover re-queries the new day's (empty) logs.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val todayLogs: StateFlow<List<MacroLog>> = _currentUserId
-        .flatMapLatest { userId ->
+    val todayLogs: StateFlow<List<MacroLog>> = combine(_currentUserId, currentDate) { userId, date ->
+        userId to date
+    }
+        .flatMapLatest { (userId, date) ->
             if (userId == null) {
                 flowOf(emptyList())
             } else {
-                repository.getTodayMacroLogs(userId)
+                repository.getTodayMacroLogs(userId, date)
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

@@ -146,6 +146,8 @@ fun TrackerScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         // Large Arc Drawing
+                        val caloriesOver = consumed.calories > limitCals
+                        val calorieOverBy = consumed.calories - limitCals
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.size(160.dp)
@@ -157,6 +159,9 @@ fun TrackerScreen(
                                 label = "ringProgress"
                             )
                             val strokeWidthVal = 14.dp
+                            // Over target → ring goes full red; otherwise emerald progress
+                            val ringColor = if (caloriesOver) SoftRed else NeonEmerald
+                            val ringSweep = if (caloriesOver) 1f else animatedPercent
 
                             Canvas(modifier = Modifier.size(140.dp)) {
                                 // Background circle ring
@@ -164,11 +169,11 @@ fun TrackerScreen(
                                     color = SlateBorder,
                                     style = Stroke(width = strokeWidthVal.toPx())
                                 )
-                                // Active progress Arc emerald
+                                // Active progress Arc
                                 drawArc(
-                                    color = NeonEmerald,
+                                    color = ringColor,
                                     startAngle = -90f,
-                                    sweepAngle = animatedPercent * 360f,
+                                    sweepAngle = ringSweep * 360f,
                                     useCenter = false,
                                     style = Stroke(width = strokeWidthVal.toPx(), cap = StrokeCap.Round)
                                 )
@@ -178,7 +183,7 @@ fun TrackerScreen(
                                 Text(
                                     text = consumed.calories.toString(),
                                     style = MaterialTheme.typography.displayMedium,
-                                    color = TextPrimary
+                                    color = if (caloriesOver) SoftRed else TextPrimary
                                 )
                                 Text(
                                     text = "of $limitCals kcal",
@@ -186,6 +191,23 @@ fun TrackerScreen(
                                     color = TextSecondary,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                                if (caloriesOver) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(SoftRed.copy(alpha = 0.12f))
+                                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "▲ $calorieOverBy kcal over",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SoftRed,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
 
@@ -224,8 +246,11 @@ fun TrackerScreen(
                 }
             }
 
-            // Section 2: Remaining Macros tip — a plain accent strip, not a second floating card
+            // Section 2: Remaining Macros tip — flips to a red over-target warning when exceeded
             item {
+                val overCals = consumed.calories > limitCals
+                val calsOverBy = consumed.calories - limitCals
+                val carbsOverBy = consumed.carbs - limitCarbs
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -236,32 +261,47 @@ fun TrackerScreen(
                             .width(3.dp)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(2.dp))
-                            .background(NeonEmerald)
+                            .background(if (overCals) SoftRed else NeonEmerald)
                     )
                     Row(
                         modifier = Modifier.padding(start = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.DirectionsRun,
+                            imageVector = if (overCals) Icons.Default.Warning else Icons.AutoMirrored.Filled.DirectionsRun,
                             contentDescription = "",
-                            tint = NeonEmerald,
+                            tint = if (overCals) SoftRed else NeonEmerald,
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            val remProtein = Math.max(0, limitProtein - consumed.protein)
-                            val remCals = Math.max(0, limitCals - consumed.calories)
-                            Text(
-                                text = "${remProtein}g protein remaining today",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = "Your metabolic target has $remCals calories left for matching dynamic Swiggy finds.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
-                            )
+                            if (overCals) {
+                                Text(
+                                    text = "You're $calsOverBy kcal over today's target",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = SoftRed,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val extra = if (carbsOverBy > 0) " Carbs also ${carbsOverBy}g over." else ""
+                                Text(
+                                    text = "Consider a lighter next meal.$extra",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            } else {
+                                val remProtein = Math.max(0, limitProtein - consumed.protein)
+                                val remCals = Math.max(0, limitCals - consumed.calories)
+                                Text(
+                                    text = "${remProtein}g protein remaining today",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Your metabolic target has $remCals calories left for matching dynamic Swiggy finds.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            }
                         }
                     }
                 }
@@ -680,13 +720,22 @@ fun MacroBarItem(
         ),
         label = "macroBarFill"
     )
+    // Over this macro's own limit → bar + value turn red with an over flag
+    val isOver = current > limit
+    val overBy = current - limit
+    val barColor = if (isOver) SoftRed else color
     Column(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(title, fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-            Text("$current/${limit}g", fontSize = 10.sp, color = TextSecondary)
+            Text(
+                "$current/${limit}g",
+                fontSize = 10.sp,
+                color = if (isOver) SoftRed else TextSecondary,
+                fontWeight = if (isOver) FontWeight.Bold else FontWeight.Normal
+            )
         }
         Spacer(modifier = Modifier.height(4.dp))
         // Progress item bar
@@ -702,7 +751,16 @@ fun MacroBarItem(
                     .fillMaxWidth(animatedProgress)
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(color)
+                    .background(barColor)
+            )
+        }
+        if (isOver) {
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                "▲ ${overBy}g over",
+                fontSize = 9.sp,
+                color = SoftRed,
+                fontWeight = FontWeight.Bold
             )
         }
     }
