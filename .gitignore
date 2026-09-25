@@ -17,6 +17,10 @@ local.properties
 .env
 debug.keystore
 
+# Intermediate model artifacts from scripts/export_laya_onnx.py — only the final
+# app/src/main/assets/laya_decision.onnx + vocab.txt ship with the app.
+/scripts/build
+
 # Local AI-tooling state (not part of the app)
 /.claude
 /.agents
