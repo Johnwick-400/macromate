@@ -40,9 +40,9 @@ class MacroMateRepository(private val dao: DatabaseDao) {
     }
 
     // --- Macro Log Queries ---
-    fun getTodayMacroLogs(userId: String): Flow<List<MacroLog>> {
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        return dao.getMacroLogsFlow(userId, today)
+    // dateString supplied by caller so the ViewModel can re-query on midnight rollover.
+    fun getTodayMacroLogs(userId: String, dateString: String): Flow<List<MacroLog>> {
+        return dao.getMacroLogsFlow(userId, dateString)
     }
 
     fun getAllMacroLogs(userId: String): Flow<List<MacroLog>> {
