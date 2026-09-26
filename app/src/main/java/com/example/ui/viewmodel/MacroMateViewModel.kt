@@ -15,6 +15,8 @@ import com.example.data.repository.MacroMateRepository
 import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
 import com.example.data.repository.SwiggyClient
+import com.example.data.repository.StepSource
+import com.example.data.repository.StepTracker
 import com.example.data.repository.SwiggyMcpClient
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -141,6 +143,22 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Step tracking (motion sensors) ---
+    // Combined with currentDate so the count reads 0 after midnight even before the next step.
+    val todaySteps: StateFlow<Int> = combine(StepTracker.state, currentDate) { steps, date ->
+        if (steps.date == date) steps.steps else 0
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val stepSource: StateFlow<StepSource> = StepTracker.state
+        .map { it.source }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StepSource.NONE)
+
+    /** Idempotent; call again after the activity-recognition permission changes. */
+    fun startStepTracking() = StepTracker.start(getApplication())
+
+    fun stopStepTracking() = StepTracker.stop()
 
     // --- All Historic Logs ---
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
