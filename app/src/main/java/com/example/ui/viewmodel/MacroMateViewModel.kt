@@ -637,92 +637,41 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         return cart.value.sumOf { it.dish.price * it.quantity }
     }
 
-    /** [onComplete] reports whether the cart was actually pushed to the user's real Swiggy
-     *  cart (true) vs. only logged locally (false — not connected, or the sync call failed). */
-    fun confirmCartAndPlaceOrder(onComplete: (syncedToSwiggy: Boolean) -> Unit = {}) {
+    /**
+     * Pushes the basket into the user's real Swiggy cart (no order is placed — checkout and payment
+     * happen in Swiggy) and reports whether it worked so the screen can open Swiggy's cart. Nothing is
+     * logged as eaten or recorded as an order here, and the basket is kept so it can still be edited.
+     */
+    fun sendCartToSwiggy(onComplete: (syncedToSwiggy: Boolean, message: String, restaurantId: String?) -> Unit = { _, _, _ -> }) {
         viewModelScope.launch {
             val items = cart.value
-            if (items.isEmpty()) { onComplete(false); return@launch }
-
-            val totalMacros = getCartMacros()
-            val totalPrice = getCartTotal()
-            val orderId = "MM-${100000 + Random().nextInt(899999)}"
-            val swiggyId = "SWIGGY-${10000000 + Random().nextInt(89999999)}"
-
-            // 1. Create items string description
-            val itemsDescriptionList = items.map { "${it.quantity}x ${it.dish.name} (${it.dish.restaurantName})" }
-            val itemsJson = JSONArray(itemsDescriptionList).toString()
-
-            val userId = _currentUserId.value ?: "default_user"
-
-            // 2. Insert into room order history
-            val newOrder = OrderHistory(
-                orderId = orderId,
-                userId = userId,
-                itemsJson = itemsJson,
-                totalProtein = totalMacros.protein,
-                totalCarbs = totalMacros.carbs,
-                totalFat = totalMacros.fat,
-                totalCalories = totalMacros.calories,
-                totalPrice = totalPrice,
-                swiggyOrderId = swiggyId,
-                createdAt = System.currentTimeMillis()
-            )
-            repository.saveOrderHistory(newOrder)
-
-            // 3. Log these items to today's macros
-            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            items.forEach { item ->
-                val logs = MacroLog(
-                    userId = userId,
-                    dateString = todayStr,
-                    name = item.dish.name,
-                    restaurant = item.dish.restaurantName,
-                    proteinG = item.dish.proteinG * item.quantity,
-                    carbsG = item.dish.carbsG * item.quantity,
-                    fatG = item.dish.fatG * item.quantity,
-                    calories = item.dish.calories * item.quantity,
-                    price = item.dish.price * item.quantity,
-                    source = "swiggy"
+            if (items.isEmpty()) { onComplete(false, "Your basket is empty", null); return@launch }
+            if (!SwiggyMcpClient.isConnected()) {
+                onComplete(false, "Connect your Swiggy account in Profile to send items to your Swiggy cart", null)
+                return@launch
+            }
+            // Swiggy carts hold one restaurant at a time, so sync the restaurant with the most items.
+            val group = items.groupBy { it.dish.restaurantId }
+                .filterKeys { it.isNotBlank() }
+                .maxByOrNull { it.value.size }
+            if (group == null) { onComplete(false, "These items can't be sent to Swiggy", null); return@launch }
+            try {
+                SwiggyMcpClient.updateCart(
+                    restaurantId = group.key,
+                    restaurantName = group.value.first().dish.restaurantName,
+                    items = group.value.map { it.dish.id to it.quantity }
                 )
-                repository.saveMacroLog(logs)
-            }
-
-            // 4. Push items into the user's real Swiggy cart so the deep-link opens a
-            // populated cart instead of the app's home screen. Swiggy carts are single-
-            // restaurant, so when items span restaurants, sync the largest group.
-            var syncedToSwiggy = false
-            if (SwiggyMcpClient.isConnected()) {
-                val largestRestaurant = items.groupBy { it.dish.restaurantId }
-                    .filterKeys { it.isNotBlank() }
-                    .maxByOrNull { it.value.size }
-                if (largestRestaurant != null) {
-                    try {
-                        SwiggyMcpClient.updateCart(
-                            restaurantId = largestRestaurant.key,
-                            restaurantName = largestRestaurant.value.first().dish.restaurantName,
-                            items = largestRestaurant.value.map { it.dish.id to it.quantity }
-                        )
-                        syncedToSwiggy = true
-                    } catch (e: Exception) {
-                        Log.w("MacroMateViewModel", "Failed to sync cart to Swiggy", e)
-                    }
-                }
-            }
-
-            // 5. Clear Cart
-            clearCart()
-
-            _chatMessages.update { old ->
-                old + ChatMessage(
-                    sender = "SYSTEM",
-                    content = if (syncedToSwiggy)
-                        "🎉 Swiggy Cart Synced! Your items are in your real Swiggy cart, ready to check out. Meals logged to your daily Macro tracker."
-                    else
-                        "Order logged locally under ID: $swiggyId. Connect your Swiggy account in Profile to sync items to your real Swiggy cart. Meals logged to your daily Macro tracker."
+                val skipped = items.size - group.value.size
+                onComplete(
+                    true,
+                    if (skipped > 0) "Added ${group.value.first().dish.restaurantName} items to your Swiggy cart — $skipped item(s) from other restaurants were left out (Swiggy carts hold one restaurant)"
+                    else "Items added to your Swiggy cart — opening Swiggy...",
+                    group.key
                 )
+            } catch (e: Exception) {
+                Log.w("MacroMateViewModel", "Failed to sync cart to Swiggy", e)
+                onComplete(false, "Couldn't add to your Swiggy cart: ${e.message ?: "please try again"}", null)
             }
-            onComplete(syncedToSwiggy)
         }
     }
 

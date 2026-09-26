@@ -130,7 +130,7 @@ object LayaDecisionEngine {
 
                     return SystemOneDecision(
                         goal = goal,
-                        budget = BUDGET_ORDER[budgetIdx],
+                        budget = budgetIntent(query, BUDGET_ORDER[budgetIdx]),
                         searchKeyword = extractFoodTerm(query) ?: searchKeywordFor(goal, isVeg),
                         requestedFood = extractFoodTerm(query),
                         isVegetarianForced = isVeg,
@@ -160,6 +160,15 @@ object LayaDecisionEngine {
         if (VEG_HINTS.any { it in lower }) return true
         return modelVegProbability >= 0.9f
     }
+
+    private val PRICE_SIGNAL = Regex("\\d|cheap|budget|afford|premium|luxury|expens|pocket|price|cost|rupee|\\brs\\b|₹")
+
+    /**
+     * A price ceiling is only applied when the query talks about price. The model has no signal for
+     * a plain "burgers", so its guess ("under ₹200") must not silently hide restaurants.
+     */
+    private fun budgetIntent(query: String, modelPick: BudgetTier): BudgetTier =
+        if (PRICE_SIGNAL.containsMatchIn(query.lowercase(Locale.ROOT))) modelPick else BudgetTier.PREMIUM_UNRESTRICTED
 
     private fun softmax(logits: FloatArray): FloatArray {
         val max = logits.max()
@@ -205,7 +214,7 @@ object LayaDecisionEngine {
             budgetAmount != null -> BudgetTier.PREMIUM_UNRESTRICTED
             listOf("cheap", "budget", "affordable").any { it in lower } -> BudgetTier.BUDGET_UNDER_200
             listOf("premium", "luxury", "unrestricted").any { it in lower } -> BudgetTier.PREMIUM_UNRESTRICTED
-            else -> BudgetTier.STANDARD_UNDER_400
+            else -> BudgetTier.PREMIUM_UNRESTRICTED // no price words: don't invent a ceiling
         }
 
         val nonVegWords = listOf("chicken", "mutton", "fish", "egg", "prawn", "non-veg", "nonveg", "meat", "biryani")

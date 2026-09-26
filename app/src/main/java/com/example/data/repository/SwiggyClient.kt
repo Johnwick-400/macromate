@@ -6,6 +6,9 @@ import com.example.data.model.DishItem
 import com.example.data.model.Restaurant
 import java.util.Locale
 
+/** Live Swiggy could not be reached; the message is safe to show the user. */
+class SwiggyUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 object SwiggyClient {
     private const val TAG = "SwiggyClient"
 
@@ -366,8 +369,11 @@ object SwiggyClient {
     // TOOL 1 — searchRestaurants (live Swiggy MCP when connected, mock fallback)
     /**
      * [strict] = the caller asked for something specific (e.g. "burger"): return only genuine
-     * matches — possibly none — instead of silently broadening to unrelated restaurants, and never
-     * swap live Swiggy results for the offline demo data. Non-strict keeps the friendly fallbacks.
+     * matches — possibly none — instead of silently broadening to unrelated restaurants.
+     *
+     * A connected Swiggy account always gets live results (possibly none) and never demo data; if
+     * Swiggy can't be reached this throws [SwiggyUnavailableException] so the agent can say so.
+     * The offline demo restaurants are only used when no account is connected.
      */
     suspend fun searchRestaurants(
         lat: Double = 12.9716,
@@ -377,22 +383,20 @@ object SwiggyClient {
         budget: BudgetTier? = null,
         strict: Boolean = false
     ): List<Restaurant> {
-        val live: List<Restaurant>? = if (isLive()) {
+        val candidates = if (isLive()) {
             try {
                 SwiggyMcpClient.searchRestaurants(query)
             } catch (e: Exception) {
                 Log.w(TAG, "Live Swiggy search failed", e)
-                null
+                throw SwiggyUnavailableException(
+                    "I couldn't reach Swiggy just now (${e.message ?: "network problem"}). " +
+                        "Check your connection and try again — I don't want to show you demo dishes as if they were live.",
+                    e
+                )
             }
-        } else null
-
-        val candidates = when {
-            live != null && (live.isNotEmpty() || strict) -> live
-            isLive() && strict -> emptyList() // connected but the search failed: don't show demo data as if it were Swiggy
-            else -> {
-                val matches = restaurantsList.filter { mockMatches(it, query) }
-                if (strict) matches else matches.ifEmpty { restaurantsList }
-            }
+        } else {
+            val matches = restaurantsList.filter { mockMatches(it, query) }
+            if (strict) matches else matches.ifEmpty { restaurantsList }
         }
 
         // Swiggy's search API has no price-ceiling parameter (confirmed against its own docs),
@@ -427,6 +431,11 @@ object SwiggyClient {
                 return SwiggyMcpClient.getMenu(restaurantId)
             } catch (e: Exception) {
                 Log.w(TAG, "Live Swiggy menu fetch failed for $restaurantId", e)
+                throw SwiggyUnavailableException(
+                    "I couldn't load a restaurant menu from Swiggy just now (${e.message ?: "network problem"}). " +
+                        "Check your connection and try again.",
+                    e
+                )
             }
         }
         return emptyList()

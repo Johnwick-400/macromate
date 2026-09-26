@@ -315,6 +315,10 @@ object SwiggyMcpClient {
             }
             ?: throw IllegalStateException("Unparseable MCP result for $name")
 
+        // Some Swiggy endpoints report failure as statusCode != 0 with data=null and a human message.
+        if (envelope.has("statusCode") && envelope.optInt("statusCode") != 0 && envelope.isNull("data")) {
+            throw IllegalStateException(envelope.optString("statusMessage").ifBlank { "$name failed" })
+        }
         if (envelope.has("success") && !envelope.optBoolean("success")) {
             throw IllegalStateException(envelope.optJSONObject("error")?.optString("message") ?: "$name failed")
         }
@@ -396,7 +400,7 @@ object SwiggyMcpClient {
         withContext(Dispatchers.IO) {
             val cartItems = JSONArray()
             items.forEach { (itemId, quantity) ->
-                cartItems.put(JSONObject().put("itemId", itemId).put("quantity", quantity))
+                cartItems.put(JSONObject().put("menu_item_id", itemId).put("quantity", quantity))
             }
             val data = callTool(
                 "update_food_cart",
@@ -406,6 +410,7 @@ object SwiggyMcpClient {
                     .put("cartItems", cartItems)
                     .put("addressId", addressId ?: throw IllegalStateException("Not connected to Swiggy"))
             )
+            Log.i(TAG, "update_food_cart(restaurant=$restaurantId, address=$addressId) -> ${data.toString().take(800)}")
             extractToPay(data)
         }
 
@@ -488,6 +493,8 @@ object SwiggyMcpClient {
                 val name = node.optString("name")
                 val price = node.optDouble("price", node.optDouble("defaultPrice", -1.0))
                 if (name.isNotBlank() && price >= 0) {
+                    // Swiggy lists out-of-stock dishes too; they can't be ordered, so never recommend them.
+                    if (node.optInt("inStock", 1) == 0) return
                     out.add(
                         DishItem(
                             id = firstString(node, "itemId", "id", "dishId") ?: "$restaurantId-${name.hashCode()}",

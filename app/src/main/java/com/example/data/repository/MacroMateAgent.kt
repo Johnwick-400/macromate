@@ -146,6 +146,9 @@ object MacroMateAgent {
                 emit(AgentState.Success(responseMsg, finalDishes))
             }
 
+        } catch (e: SwiggyUnavailableException) {
+            Log.w(TAG, "Swiggy unavailable during agent run", e)
+            emit(AgentState.Success(e.message ?: "I couldn't reach Swiggy just now. Please try again.", emptyList()))
         } catch (e: Exception) {
             Log.e(TAG, "Error compiling agent response", e)
             emit(AgentState.Error("An error occurred during ReAct Agent evaluation: ${e.localizedMessage}"))
@@ -324,10 +327,14 @@ object MacroMateAgent {
         return false
     }
 
-    private fun isNonVeg(dish: DishItem): Boolean {
-        val text = (dish.name + " " + dish.description).lowercase(Locale.ROOT)
-        return text.contains("chicken") || text.contains("fish") || text.contains("egg") || text.contains("mutton") || text.contains("chicken")
-    }
+    private val NON_VEG_REGEX = Regex(
+        "\\b(chicken|mutton|lamb|goat|fish|prawns?|shrimps?|crab|seafood|tuna|salmon|egg|eggs|omelette|omelet|beef|pork|" +
+            "bacon|ham|sausages?|salami|pepperoni|keema|meat|meatballs?|turkey|non[- ]?veg)\\b"
+    )
+
+    /** Whole-word match, so "Veggie" or "eggplant" don't count as egg, and "Lamb" / "Non Veg" do count. */
+    internal fun isNonVeg(dish: DishItem): Boolean =
+        NON_VEG_REGEX.containsMatchIn("${dish.name} ${dish.description}".lowercase(Locale.ROOT))
 
     private fun isVegan(dish: DishItem): Boolean {
         if (isNonVeg(dish)) return false
