@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.data.model.BudgetTier
 import com.example.data.model.DishItem
 import com.example.data.model.Restaurant
 import java.util.Locale
@@ -318,22 +319,44 @@ object SwiggyClient {
     fun isLive(): Boolean = SwiggyMcpClient.isConnected()
 
     // TOOL 1 — searchRestaurants (live Swiggy MCP when connected, mock fallback)
-    suspend fun searchRestaurants(lat: Double = 12.9716, lng: Double = 77.5946, query: String, limit: Int = 4): List<Restaurant> {
-        if (isLive()) {
+    suspend fun searchRestaurants(
+        lat: Double = 12.9716,
+        lng: Double = 77.5946,
+        query: String,
+        limit: Int = 4,
+        budget: BudgetTier? = null
+    ): List<Restaurant> {
+        val results = if (isLive()) {
             try {
                 val live = SwiggyMcpClient.searchRestaurants(query)
-                if (live.isNotEmpty()) return live.take(limit)
+                live.ifEmpty { null }
             } catch (e: Exception) {
                 Log.w(TAG, "Live Swiggy search failed, falling back to mock", e)
+                null
             }
+        } else null
+
+        val candidates = results ?: run {
+            val lowerQuery = query.lowercase(Locale.ROOT)
+            restaurantsList.filter { restaurant ->
+                restaurant.name.lowercase(Locale.ROOT).contains(lowerQuery) ||
+                restaurant.cuisines.any { c -> c.lowercase(Locale.ROOT).contains(lowerQuery) }
+            }.ifEmpty { restaurantsList }
         }
-        val lowerQuery = query.lowercase(Locale.ROOT)
-        return restaurantsList.filter { restaurant ->
-            restaurant.name.lowercase(Locale.ROOT).contains(lowerQuery) ||
-            restaurant.cuisines.any { c -> c.lowercase(Locale.ROOT).contains(lowerQuery) }
-        }.take(limit).ifEmpty {
-            restaurantsList.take(limit)
-        }
+
+        // Swiggy's search API has no price-ceiling parameter (confirmed against its own docs),
+        // so budget tier is applied as a client-side post-filter, same for live and mock data.
+        val budgetFiltered = maxPriceFor(budget)?.let { ceiling ->
+            candidates.filter { it.averagePrice <= ceiling }.ifEmpty { candidates }
+        } ?: candidates
+
+        return budgetFiltered.take(limit)
+    }
+
+    private fun maxPriceFor(budget: BudgetTier?): Double? = when (budget) {
+        BudgetTier.BUDGET_UNDER_200 -> 200.0
+        BudgetTier.STANDARD_UNDER_400 -> 400.0
+        BudgetTier.PREMIUM_UNRESTRICTED, null -> null
     }
 
     // TOOL 2 — getMenuAndEstimateMacros (live MCP menu + macro estimation, mock fallback)

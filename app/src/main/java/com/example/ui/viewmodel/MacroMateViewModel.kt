@@ -10,6 +10,7 @@ import android.content.Intent
 import android.net.Uri
 import com.example.data.repository.AgentState
 import com.example.data.repository.GeminiNanoClient
+import com.example.data.repository.LayaDecisionEngine
 import com.example.data.repository.MacroMateRepository
 import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
@@ -57,6 +58,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         SwiggyMcpClient.init(application)
         _swiggyLinked.value = SwiggyMcpClient.isConnected()
         _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
+        LayaDecisionEngine.init(application)
     }
 
     fun connectSwiggy() {

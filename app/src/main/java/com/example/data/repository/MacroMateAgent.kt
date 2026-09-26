@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.data.model.BudgetTier
 import com.example.data.model.DishItem
 import com.example.data.model.Restaurant
 import com.example.data.model.UserProfile
@@ -49,16 +50,18 @@ object MacroMateAgent {
             Log.d(TAG, "Allergen list for filtering: $allergensList")
             Log.d(TAG, "Cuisine preferences: $cuisinePrefs")
 
-            var searchTerm = query
-            if (RestGeminiClient.isApiKeyAvailable()) {
-                emit(AgentState.Thinking("Interpreting your request with Gemini..."))
-                interpretSearchQuery(query, profile)?.let { searchTerm = it }
-                delay(400)
-            }
+            val decision = LayaDecisionEngine.evaluateIntent(query, remainingProtein, remainingCalories)
+            val enginePath = if (decision.usedOnnxModel) "On-Device NPU/CPU" else "rule fallback"
+            emit(AgentState.Thinking(
+                "⚡ System 1 Decision (Laya · $enginePath · ${decision.latencyMs}ms): " +
+                        "Goal=${decision.goal}, Budget=${decision.budget}"
+            ))
+            val searchTerm = decision.searchKeyword
+            val forceVeg = decision.isVegetarianForced
 
             var matchingDishes = runSearchPass(
                 searchTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                allergensList, cuisinePrefs
+                allergensList, cuisinePrefs, decision.budget, forceVeg
             ) { emit(it) }
 
             // Agentic retry: one bounded re-search from a different angle if results are weak
@@ -70,7 +73,7 @@ object MacroMateAgent {
                     emit(AgentState.Thinking("Retrying with refined query: \"$altTerm\""))
                     val retryDishes = runSearchPass(
                         altTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                        allergensList, cuisinePrefs
+                        allergensList, cuisinePrefs, decision.budget, forceVeg
                     ) { emit(it) }
                     matchingDishes = (matchingDishes + retryDishes).distinctBy { it.id }
                 }
@@ -121,12 +124,14 @@ object MacroMateAgent {
         remainingFat: Int,
         allergensList: List<String>,
         cuisinePrefs: List<String>,
+        budget: BudgetTier,
+        forceVeg: Boolean,
         emit: suspend (AgentState) -> Unit
     ): List<DishItem> {
-        emit(AgentState.Thinking("Calling Tool: searchRestaurants(query=\"$searchTerm\")"))
+        emit(AgentState.Thinking("Calling Tool: searchRestaurants(query=\"$searchTerm\", budget=$budget)"))
         delay(1200)
 
-        val restaurants = SwiggyClient.searchRestaurants(query = searchTerm)
+        val restaurants = SwiggyClient.searchRestaurants(query = searchTerm, budget = budget)
         emit(AgentState.Thinking("Found ${restaurants.size} restaurant candidates in your zone. Analysing menus..."))
         delay(1000)
 
@@ -151,9 +156,10 @@ object MacroMateAgent {
                     continue
                 }
 
-                // Check core dietary restrictions (Vegetarian, Vegan)
-                if (allergensList.contains("vegetarian") && isNonVeg(dish)) {
-                    Log.d(TAG, "Filtering out non-veg dish ${dish.name} for vegetarian user")
+                // Check core dietary restrictions (Vegetarian, Vegan) — a profile-level
+                // preference, or the System 1 engine reading "veg"/"paneer"/etc. in this query.
+                if ((allergensList.contains("vegetarian") || forceVeg) && isNonVeg(dish)) {
+                    Log.d(TAG, "Filtering out non-veg dish ${dish.name} for vegetarian preference")
                     continue
                 }
                 if (allergensList.contains("vegan") && !isVegan(dish)) {
@@ -190,20 +196,6 @@ object MacroMateAgent {
             }
         }
         return matchingDishes
-    }
-
-    /** Turns a possibly-vague user request into a concrete restaurant/cuisine search keyword. Null on any failure. */
-    private suspend fun interpretSearchQuery(query: String, profile: UserProfile): String? {
-        val json = RestGeminiClient.generateJson(
-            prompt = "User's food request: \"$query\"\n" +
-                    "Goal: ${profile.goal}. Cuisine preferences JSON: ${profile.cuisinePrefsJson}.\n" +
-                    "Interpret this into ONE short restaurant/cuisine search keyword a food delivery search box would " +
-                    "understand (e.g. \"keto\", \"high protein\", \"south indian\", \"salad\"). " +
-                    "If the request is already a clear keyword, return it as-is.\n" +
-                    "Return JSON: {\"searchTerm\": \"<keyword>\"}",
-            systemInstruction = "You are a search query interpreter for a food delivery app. Respond with JSON only."
-        ) ?: return null
-        return json.optString("searchTerm").takeIf { it.isNotBlank() }
     }
 
     /** Asks for a different search angle after a weak first pass. Null on any failure. */
