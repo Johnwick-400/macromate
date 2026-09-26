@@ -151,8 +151,7 @@ fun ChatScreen(
                     }
                 }
 
-                // Small badge highlighting active model provider
-                val profile by viewModel.userProfile.collectAsState()
+                // Small badge highlighting active on-device model
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -160,7 +159,7 @@ fun ChatScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = profile?.llmProvider?.uppercase() ?: "GEMINI",
+                        text = "ON-DEVICE LAYA",
                         style = MaterialTheme.typography.labelSmall,
                         color = NeonEmerald,
                         fontWeight = FontWeight.Bold
