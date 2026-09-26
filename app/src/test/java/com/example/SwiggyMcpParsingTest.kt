@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 
 /** Robolectric needed for real org.json on the JVM. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class SwiggyMcpParsingTest {
 
     @Test

@@ -11,7 +11,7 @@ import java.util.Locale
 
 /** Robolectric for a real android.location.Address. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class DeviceLocationMappingTest {
 
     @Test
