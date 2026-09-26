@@ -1,7 +1,14 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -240,7 +247,24 @@ fun ProfileScreen(
                 val swiggyLinked by viewModel.swiggyLinked.collectAsState()
                 val swiggyStatus by viewModel.swiggyStatus.collectAsState()
                 val activeAddress by viewModel.activeSwiggyAddress.collectAsState()
+                val isLocating by viewModel.isLocating.collectAsState()
+                val locationDraft by viewModel.currentLocationDraft.collectAsState()
                 var showAddressPicker by remember { mutableStateOf(false) }
+
+                val locationPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions()
+                ) { grants ->
+                    if (grants.values.any { it }) {
+                        viewModel.resolveCurrentLocation()
+                    } else {
+                        Toast.makeText(context, "Location permission is needed to use your current location.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                val requestCurrentLocation = {
+                    locationPermissionLauncher.launch(
+                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    )
+                }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -308,6 +332,31 @@ fun ProfileScreen(
                                 }
                                 Text("Change", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonEmerald)
                             }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = requestCurrentLocation,
+                                enabled = !isLocating,
+                                border = BorderStroke(1.dp, NeonEmerald.copy(alpha = 0.6f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("swiggy_current_location_button")
+                            ) {
+                                if (isLocating) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = NeonEmerald, strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Finding your location…", color = NeonEmerald, fontSize = 13.sp)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.MyLocation,
+                                        contentDescription = null,
+                                        tint = NeonEmerald,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Use my current location", color = NeonEmerald, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -334,7 +383,20 @@ fun ProfileScreen(
                 if (showAddressPicker) {
                     SwiggyAddressPickerDialog(
                         viewModel = viewModel,
+                        onUseCurrentLocation = {
+                            showAddressPicker = false
+                            requestCurrentLocation()
+                        },
                         onDismiss = { showAddressPicker = false }
+                    )
+                }
+
+                locationDraft?.let { draft ->
+                    CurrentLocationConfirmDialog(
+                        draft = draft,
+                        saving = isLocating,
+                        onConfirm = viewModel::saveCurrentLocationToSwiggy,
+                        onDismiss = viewModel::dismissCurrentLocationDraft
                     )
                 }
             }
@@ -460,6 +522,7 @@ fun ProfileScreen(
 @Composable
 private fun SwiggyAddressPickerDialog(
     viewModel: MacroMateViewModel,
+    onUseCurrentLocation: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val addresses by viewModel.swiggyAddresses.collectAsState()
@@ -472,6 +535,25 @@ private fun SwiggyAddressPickerDialog(
         title = { Text("Choose delivery address", fontWeight = FontWeight.Bold, color = TextPrimary) },
         text = {
             Column(modifier = Modifier.heightIn(max = 360.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SlateDark)
+                        .clickable(onClick = onUseCurrentLocation)
+                        .padding(vertical = 10.dp, horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.MyLocation, contentDescription = null, tint = NeonEmerald, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text("Use my current location", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = NeonEmerald)
+                        Text("Detect via GPS and save it to Swiggy", fontSize = 12.sp, color = TextSecondary)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("SAVED ON SWIGGY", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextHint, letterSpacing = 1.sp)
+                Spacer(modifier = Modifier.height(4.dp))
                 if (addresses.isEmpty() && loading) {
                     Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = NeonEmerald)
@@ -520,6 +602,127 @@ private fun SwiggyAddressPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) }
+        }
+    )
+}
+
+/**
+ * Review step before the detected location is saved as a real Swiggy address — reverse
+ * geocoding is approximate, and the flat/floor line can never be detected from GPS.
+ */
+@Composable
+private fun CurrentLocationConfirmDialog(
+    draft: MacroMateViewModel.CurrentLocationDraft,
+    saving: Boolean,
+    onConfirm: (MacroMateViewModel.CurrentLocationDraft) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val a = draft.address
+    var flat by remember(draft) { mutableStateOf(a.addressLine2) }
+    var street by remember(draft) { mutableStateOf(a.addressLine) }
+    var city by remember(draft) { mutableStateOf(a.city) }
+    var pincode by remember(draft) { mutableStateOf(a.postalCode) }
+    var name by remember(draft) { mutableStateOf(draft.userName) }
+    var phone by remember(draft) { mutableStateOf(draft.userPhone) }
+
+    val valid = street.isNotBlank() && city.isNotBlank() && pincode.isNotBlank() &&
+            name.isNotBlank() && phone.isNotBlank()
+
+    val fieldColors = TextFieldDefaults.colors(
+        focusedContainerColor = SlateDark,
+        unfocusedContainerColor = SlateDark,
+        focusedTextColor = TextPrimary,
+        unfocusedTextColor = TextPrimary
+    )
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        containerColor = SlateCard,
+        title = { Text("Confirm current location", fontWeight = FontWeight.Bold, color = TextPrimary) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Detected at %.5f, %.5f. Check the details — this is saved to your Swiggy account as \"MacroMate · Current location\" and replaces the one MacroMate saved before.".format(a.latitude, a.longitude),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                OutlinedTextField(
+                    value = flat, onValueChange = { flat = it },
+                    label = { Text("Flat / floor / building (optional)") },
+                    singleLine = true, colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth().testTag("current_location_flat_input")
+                )
+                OutlinedTextField(
+                    value = street, onValueChange = { street = it },
+                    label = { Text("Street / area") },
+                    singleLine = true, colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = city, onValueChange = { city = it },
+                        label = { Text("City") },
+                        singleLine = true, colors = fieldColors,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = pincode, onValueChange = { pincode = it },
+                        label = { Text("Pincode") },
+                        singleLine = true, colors = fieldColors,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("Your name") },
+                    singleLine = true, colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = phone, onValueChange = { phone = it },
+                    label = { Text("Swiggy phone number") },
+                    singleLine = true, colors = fieldColors,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val full = listOf(flat, street, a.locality, city, pincode)
+                        .map(String::trim).filter(String::isNotEmpty).distinct().joinToString(", ")
+                    onConfirm(
+                        draft.copy(
+                            address = a.copy(
+                                fullAddress = full,
+                                addressLine = street.trim(),
+                                addressLine2 = flat.trim(),
+                                city = city.trim(),
+                                postalCode = pincode.trim()
+                            ),
+                            userName = name.trim(),
+                            userPhone = phone.trim()
+                        )
+                    )
+                },
+                enabled = valid && !saving,
+                colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald),
+                modifier = Modifier.testTag("current_location_confirm_button")
+            ) {
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                } else {
+                    Text("Deliver here")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel", color = TextSecondary) }
         }
     )
 }
