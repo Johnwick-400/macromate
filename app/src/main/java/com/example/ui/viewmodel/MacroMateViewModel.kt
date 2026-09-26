@@ -20,6 +20,7 @@ import com.example.data.repository.StepTracker
 import com.example.data.repository.SwiggyMcpClient
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -131,6 +132,18 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private fun todayString(): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    private val currentDate: StateFlow<String> = flow {
+        while (true) {
+            emit(todayString())
+            delay(60_000L)
+        }
+    }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), todayString())
 
     // --- Macro Log State (Today) ---
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
