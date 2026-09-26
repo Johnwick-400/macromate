@@ -9,6 +9,7 @@ import com.example.data.model.*
 import android.content.Intent
 import android.net.Uri
 import com.example.data.repository.AgentState
+import com.example.data.repository.DeviceLocationClient
 import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.MacroMateRepository
 import com.example.data.repository.NanoFoodEstimate
@@ -109,6 +110,69 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
     fun selectSwiggyAddress(address: SwiggyAddress) {
         SwiggyMcpClient.setActiveAddress(address)
         _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
+    }
+
+    // --- Current device location as the Swiggy delivery address ---
+    /** Reverse-geocoded current location awaiting the user's review before it's saved to Swiggy. */
+    data class CurrentLocationDraft(val address: ResolvedAddress, val userName: String, val userPhone: String)
+
+    private val _currentLocationDraft = MutableStateFlow<CurrentLocationDraft?>(null)
+    val currentLocationDraft: StateFlow<CurrentLocationDraft?> = _currentLocationDraft.asStateFlow()
+
+    private val _isLocating = MutableStateFlow(false)
+    val isLocating: StateFlow<Boolean> = _isLocating.asStateFlow()
+
+    /** Step 1 (location permission already granted): GPS fix → street address → draft for review. */
+    fun resolveCurrentLocation() {
+        if (!SwiggyMcpClient.isConnected() || _isLocating.value) return
+        viewModelScope.launch {
+            _isLocating.value = true
+            try {
+                val app = getApplication<Application>()
+                val location = DeviceLocationClient.currentLocation(app)
+                if (location == null) {
+                    _swiggyStatus.value = "Couldn't get your location. Turn on location services and try again."
+                    return@launch
+                }
+                val resolved = DeviceLocationClient.reverseGeocode(app, location.latitude, location.longitude)
+                    ?: ResolvedAddress("", "", "", "", "", "", location.latitude, location.longitude)
+
+                // create_address needs the account's phone; get_addresses exposes it on saved addresses.
+                val phone = _swiggyAddresses.value.firstNotNullOfOrNull { it.phone.takeIf(String::isNotBlank) }
+                    ?: runCatching { SwiggyMcpClient.fetchAddresses(page = 1).addresses }
+                        .getOrDefault(emptyList())
+                        .firstNotNullOfOrNull { it.phone.takeIf(String::isNotBlank) }
+                    ?: ""
+                _currentLocationDraft.value = CurrentLocationDraft(
+                    address = resolved,
+                    userName = userProfile.value?.name.orEmpty(),
+                    userPhone = phone
+                )
+            } finally {
+                _isLocating.value = false
+            }
+        }
+    }
+
+    /** Step 2: user confirmed (and possibly edited) the draft — save it to Swiggy and make it active. */
+    fun saveCurrentLocationToSwiggy(draft: CurrentLocationDraft) {
+        viewModelScope.launch {
+            _isLocating.value = true
+            try {
+                SwiggyMcpClient.createCurrentLocationAddress(draft.address, draft.userName, draft.userPhone)
+                _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
+                _currentLocationDraft.value = null
+                _swiggyStatus.value = "Delivering to your current location."
+            } catch (e: Exception) {
+                _swiggyStatus.value = e.message ?: "Couldn't save your current location to Swiggy."
+            } finally {
+                _isLocating.value = false
+            }
+        }
+    }
+
+    fun dismissCurrentLocationDraft() {
+        _currentLocationDraft.value = null
     }
 
     // --- SharedPreferences & Current User ---

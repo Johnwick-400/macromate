@@ -95,7 +95,20 @@ data class CartItem(
 data class SwiggyAddress(
     val id: String,
     val label: String,
-    val line: String
+    val line: String,
+    val phone: String = ""
+)
+
+/** A device-location fix reverse-geocoded into the fields Swiggy's create_address needs. */
+data class ResolvedAddress(
+    val fullAddress: String,
+    val addressLine: String,
+    val addressLine2: String,
+    val locality: String,
+    val city: String,
+    val postalCode: String,
+    val latitude: Double,
+    val longitude: Double
 )
 
 data class ChatMessage(

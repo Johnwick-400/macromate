@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Base64
 import android.util.Log
 import com.example.data.model.DishItem
+import com.example.data.model.ResolvedAddress
 import com.example.data.model.Restaurant
 import com.example.data.model.SwiggyAddress
 import kotlinx.coroutines.Dispatchers
@@ -92,7 +93,8 @@ object SwiggyMcpClient {
         if (address.line.isNotBlank()) "${address.label} — ${address.line}" else address.label
 
     fun disconnect() {
-        prefs.edit().remove("access_token").remove("expires_at").remove("address_id").remove("address_display").apply()
+        prefs.edit().remove("access_token").remove("expires_at").remove("address_id").remove("address_display")
+            .remove("current_location_address_id").apply()
         mcpSessionId = null
     }
 
@@ -333,12 +335,57 @@ object SwiggyMcpClient {
             SwiggyAddress(
                 id = id,
                 label = firstString(o, "addressTag", "addressCategory")?.takeIf(String::isNotBlank) ?: "Saved address",
-                line = firstString(o, "addressLine").orEmpty()
+                line = firstString(o, "addressLine").orEmpty(),
+                phone = firstString(o, "phoneNumber").orEmpty()
             )
         }
         val hasMore = data.optJSONObject("pagination")?.optBoolean("hasMore", false) ?: false
         SwiggyAddressPage(addresses, hasMore)
     }
+
+    /**
+     * Saves the device's current location as a real Swiggy address (search/menu/cart tools only
+     * accept an addressId, never raw coordinates) and makes it the active delivery address.
+     * The address MacroMate created on a previous run is deleted afterwards so repeated use
+     * doesn't pile up duplicates — addresses the user saved themselves are never touched.
+     */
+    suspend fun createCurrentLocationAddress(
+        address: ResolvedAddress,
+        userName: String,
+        userPhone: String
+    ): SwiggyAddress = withContext(Dispatchers.IO) {
+        val args = JSONObject()
+            .put("fullAddress", address.fullAddress)
+            .put("addressLine", address.addressLine)
+            .put("addressLine2", address.addressLine2)
+            .put("city", address.city)
+            .put("postalCode", address.postalCode)
+            .put("latitude", address.latitude)
+            .put("longitude", address.longitude)
+            .put("addressCategory", "OTHER")
+            .put("addressTag", CURRENT_LOCATION_TAG)
+            .put("userName", userName)
+            .put("userPhone", userPhone)
+        if (address.locality.isNotBlank()) args.put("locality", address.locality)
+
+        val data = callTool("create_address", args)
+        val newId = firstString(data, "addressId", "id")
+            ?: throw IllegalStateException("Swiggy didn't return an address id")
+
+        prefs.getString("current_location_address_id", null)
+            ?.takeIf { it != newId }
+            ?.let { oldId ->
+                runCatching { callTool("delete_address", JSONObject().put("addressId", oldId)) }
+                    .onFailure { Log.w(TAG, "Couldn't remove previous current-location address", it) }
+            }
+        prefs.edit().putString("current_location_address_id", newId).apply()
+
+        val created = SwiggyAddress(id = newId, label = CURRENT_LOCATION_TAG, line = address.fullAddress, phone = userPhone)
+        setActiveAddress(created)
+        created
+    }
+
+    private const val CURRENT_LOCATION_TAG = "MacroMate · Current location"
 
     /**
      * Pushes items into the user's real Swiggy cart (single restaurant per call — Swiggy
