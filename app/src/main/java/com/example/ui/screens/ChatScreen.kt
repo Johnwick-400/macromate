@@ -41,6 +41,11 @@ import com.example.data.model.ChatMessage
 import com.example.data.model.DishItem
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MacroMateViewModel
+import android.app.Activity
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -58,6 +63,20 @@ fun ChatScreen(
     var inputQuery by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
+
+    // Speech-to-Text launcher for instant voice queries
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spoken.isNullOrBlank()) {
+                inputQuery = spoken
+                focusManager.clearFocus()
+                viewModel.sendMessage(spoken)
+            }
+        }
+    }
 
     // Dialog state for "Why this?"
     var infoDialogDish by remember { mutableStateOf<DishItem?>(null) }
@@ -405,27 +424,31 @@ fun ChatScreen(
                     shape = RoundedCornerShape(24.dp)
                 )
 
-                // Send button
+                // Action button: Send if text entered, or Mic for on-device voice input
                 Box(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(CircleShape)
-                        .background(if (inputQuery.isNotBlank()) OrangeSwiggy else SlateBorder)
-                        .then(
+                        .background(if (inputQuery.isNotBlank()) OrangeSwiggy else NeonEmerald)
+                        .tactilePress {
                             if (inputQuery.isNotBlank()) {
-                                Modifier.tactilePress {
-                                    val q = inputQuery
-                                    inputQuery = ""
-                                    focusManager.clearFocus()
-                                    viewModel.sendMessage(q)
+                                val q = inputQuery
+                                inputQuery = ""
+                                focusManager.clearFocus()
+                                viewModel.sendMessage(q)
+                            } else {
+                                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "What would you like to eat?")
                                 }
-                            } else Modifier
-                        ),
+                                speechLauncher.launch(intent)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Transmit",
+                        imageVector = if (inputQuery.isNotBlank()) Icons.AutoMirrored.Filled.Send else Icons.Default.Mic,
+                        contentDescription = if (inputQuery.isNotBlank()) "Send" else "Voice Input",
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
