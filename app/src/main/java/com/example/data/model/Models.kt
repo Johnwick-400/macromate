@@ -125,7 +125,9 @@ data class SystemOneDecision(
     val isVegetarianForced: Boolean,
     val confidence: Float,
     val latencyMs: Long,
-    val usedOnnxModel: Boolean
+    val usedOnnxModel: Boolean,
+    /** The specific dish/food the user named (e.g. "burger"), if any — searched for before falling back to the goal. */
+    val requestedFood: String? = null
 )
 
 data class ChatMessage(

@@ -125,13 +125,14 @@ object LayaDecisionEngine {
 
                     val goalIdx = goalProbs.indices.maxByOrNull { goalProbs[it] } ?: 0
                     val budgetIdx = budgetProbs.indices.maxByOrNull { budgetProbs[it] } ?: 1
-                    val isVeg = vegProbs[1] > vegProbs[0]
+                    val isVeg = vegIntent(query, vegProbs[1])
                     val goal = GOAL_ORDER[goalIdx]
 
                     return SystemOneDecision(
                         goal = goal,
                         budget = BUDGET_ORDER[budgetIdx],
-                        searchKeyword = searchKeywordFor(goal, isVeg),
+                        searchKeyword = extractFoodTerm(query) ?: searchKeywordFor(goal, isVeg),
+                        requestedFood = extractFoodTerm(query),
                         isVegetarianForced = isVeg,
                         confidence = goalProbs[goalIdx],
                         latencyMs = (System.nanoTime() - start) / 1_000_000,
@@ -142,12 +143,33 @@ object LayaDecisionEngine {
         }
     }
 
+    private val NON_VEG_WORDS = listOf("chicken", "mutton", "fish", "egg", "prawn", "non-veg", "nonveg", "meat", "biryani")
+    private val VEG_HINTS = listOf(
+        "veg", "paneer", "vegan", "tofu", "soya", "dal", "sprout", "khichdi", "chaas", "buttermilk", "lassi",
+        "juice", "salad", "fruit", "idli", "dosa", "upma"
+    )
+
+    /**
+     * Whether to restrict results to vegetarian food. An explicit word in the query decides; the
+     * model's guess only counts when it is very confident, because it has no signal for plain
+     * requests like "burgers" and should not silently exclude chicken options.
+     */
+    private fun vegIntent(query: String, modelVegProbability: Float): Boolean {
+        val lower = query.lowercase(Locale.ROOT)
+        if (NON_VEG_WORDS.any { it in lower }) return false
+        if (VEG_HINTS.any { it in lower }) return true
+        return modelVegProbability >= 0.9f
+    }
+
     private fun softmax(logits: FloatArray): FloatArray {
         val max = logits.max()
         val exps = FloatArray(logits.size) { kotlin.math.exp((logits[it] - max).toDouble()).toFloat() }
         val sum = exps.sum()
         return FloatArray(logits.size) { exps[it] / sum }
     }
+
+    /** Search keyword for a goal when the user didn't name a specific food. */
+    fun goalKeyword(goal: MealGoalType, isVeg: Boolean): String = searchKeywordFor(goal, isVeg)
 
     private fun searchKeywordFor(goal: MealGoalType, isVeg: Boolean): String {
         val base = when (goal) {
@@ -193,7 +215,8 @@ object LayaDecisionEngine {
         return SystemOneDecision(
             goal = goal,
             budget = budget,
-            searchKeyword = searchKeywordFor(goal, isVeg),
+            searchKeyword = extractFoodTerm(query) ?: searchKeywordFor(goal, isVeg),
+            requestedFood = extractFoodTerm(query),
             isVegetarianForced = isVeg,
             confidence = 0.6f,
             latencyMs = (System.nanoTime() - start) / 1_000_000,
@@ -277,4 +300,50 @@ private class WordPieceTokenizer(vocabText: String) {
         }
         return ids
     }
+}
+
+
+private val NON_FOOD_WORDS = setOf(
+    // conversational filler
+    "want", "need", "looking", "find", "get", "order", "please", "pls", "plz", "suggest", "show", "give", "some", "any",
+    "with", "and", "for", "the", "can", "could", "would", "you", "have", "that", "this", "what", "which", "like", "love",
+    "really", "very", "just", "only", "maybe", "hungry", "craving", "cravings", "crave", "feel", "feeling", "options",
+    "option", "dishes", "dish", "recipes", "items", "item", "place", "places", "restaurant", "restaurants", "nearby",
+    "near", "around", "here", "there", "today", "tomorrow", "tonight", "morning", "evening", "afternoon", "night",
+    // budget
+    "under", "below", "above", "over", "than", "less", "more", "upto", "within", "about", "rupees", "rupee", "inr",
+    "budget", "cheap", "affordable", "premium", "luxury", "expensive", "price", "cost",
+    // goals and nutrition
+    "high", "low", "protein", "carb", "carbs", "fat", "fats", "calorie", "calories", "cal", "kcal", "keto", "diet",
+    "healthy", "health", "light", "clean", "bulk", "mass", "gain", "lean", "fit", "fitness", "macro", "macros", "sugar",
+    "zero", "free", "gluten", "dairy", "nut", "allergy",
+    // diet
+    "veg", "vegetarian", "vegan", "nonveg", "non", "meat",
+    "weight", "loss", "lose", "losing", "cut", "cutting", "muscle", "build", "building", "gaining",
+    // cooking words describe the dish, they aren't its name
+    "boiled", "grilled", "fried", "steamed", "roasted", "baked", "crispy", "spicy", "creamy", "cheesy",
+    // meal words
+    "meal", "meals", "food", "lunch", "dinner", "breakfast", "brunch", "snack", "snacks", "post", "pre", "workout", "gym",
+    // vague adjectives
+    "good", "best", "tasty", "delicious", "hot", "cold", "fresh", "quick", "fast", "small", "big", "large", "double",
+    "extra", "something", "anything", "nice", "great"
+)
+
+/**
+ * The specific food the user named, if any: what is left of the sentence once filler, budget,
+ * goal, diet and meal-time words are removed ("burgers" -> "burger", "chicken burger under 250" ->
+ * "chicken burger"). Null when the request is only about goals ("high protein lunch under 300").
+ */
+internal fun extractFoodTerm(query: String): String? {
+    val words = query.lowercase(Locale.ROOT)
+        .split(Regex("[^a-z]+"))
+        .filter { it.length >= 3 && it !in NON_FOOD_WORDS }
+        .map { singular(it) }
+    return words.take(2).joinToString(" ").ifBlank { null }
+}
+
+private fun singular(word: String): String = when {
+    word.endsWith("ies") && word.length > 4 -> word.dropLast(3) + "y"
+    word.length > 4 && word.endsWith("s") && !word.endsWith("ss") && !word.endsWith("us") && !word.endsWith("is") -> word.dropLast(1)
+    else -> word
 }

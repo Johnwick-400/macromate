@@ -59,6 +59,9 @@ object MacroMateAgent {
             ))
             val searchTerm = decision.searchKeyword
             val forceVeg = decision.isVegetarianForced
+            val foodTerm = decision.requestedFood
+            val stats = SearchStats()
+            if (foodTerm != null) emit(AgentState.Thinking("🔎 You asked for \"$foodTerm\" — searching for that first."))
 
             if (AgentLlm.mode() == AgentLlm.Mode.LOCAL) {
                 emit(AgentState.Thinking(
@@ -71,11 +74,35 @@ object MacroMateAgent {
 
             var matchingDishes = runSearchPass(
                 searchTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                allergensList, cuisinePrefs, decision.budget, forceVeg
+                allergensList, cuisinePrefs, decision.budget, forceVeg,
+                strict = foodTerm != null, foodTerm = foodTerm, stats = stats
             ) { emit(it) }
 
+            // If a specific food was requested, only dishes that really are that food count. When there
+            // are none, say why and fall back to the user's goal instead of silently showing something else.
+            var noFoodReason: String? = null
+            if (foodTerm != null) {
+                val exact = matchingDishes.filter { dishMatchesFood(it, foodTerm) }
+                if (exact.isNotEmpty()) {
+                    matchingDishes = exact
+                } else {
+                    noFoodReason = if (stats.matchingSeen > 0)
+                        "I found \"$foodTerm\" options, but none fit your dietary or allergy settings"
+                    else
+                        "I couldn't find \"$foodTerm\" on the menus I can see right now"
+                    emit(AgentState.Thinking("No usable \"$foodTerm\" dishes — falling back to your ${decision.goal} goal..."))
+                    matchingDishes = runSearchPass(
+                        LayaDecisionEngine.goalKeyword(decision.goal, forceVeg),
+                        profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
+                        allergensList, cuisinePrefs, decision.budget, forceVeg
+                    ) { emit(it) }
+                }
+            }
+
             // Agentic retry: one bounded re-search from a different angle if results are weak
-            if (needsRetry(matchingDishes) && AgentLlm.mode() != AgentLlm.Mode.NONE) {
+            // A named food that was found is what the user wants: don't dilute it with the "weak results" retry.
+            if (needsRetry(matchingDishes) && AgentLlm.mode() != AgentLlm.Mode.NONE &&
+                (foodTerm == null || noFoodReason != null)) {
                 val altTerm = suggestAlternativeSearch(query, searchTerm, profile)
                 if (altTerm != null && !altTerm.equals(searchTerm, ignoreCase = true)) {
                     emit(AgentState.Thinking("Only ${matchingDishes.size} strong matches for \"$searchTerm\" — asking ${AgentLlm.label()} for a different angle..."))
@@ -96,18 +123,26 @@ object MacroMateAgent {
             val sortedDishes = matchingDishes.sortedByDescending { it.score }.take(5)
 
             if (sortedDishes.isEmpty()) {
-                emit(AgentState.Success("No matching meals fit your macro and dietary requirements at this time.", emptyList()))
+                emit(AgentState.Success(
+                    (noFoodReason?.let { "$it, and nothing else " } ?: "No meals ") +
+                        "fits your macro and dietary requirements at this time.",
+                    emptyList()
+                ))
             } else {
-                var responseMsg = "I have successfully compiled the top ${sortedDishes.size} Swiggy dishes matching your strict target goals!"
+                var responseMsg = if (noFoodReason != null)
+                    "Here are the top ${sortedDishes.size} closest matches for your macro and budget targets."
+                else
+                    "I have successfully compiled the top ${sortedDishes.size} Swiggy dishes matching your strict target goals!"
                 var finalDishes = sortedDishes
 
                 if (AgentLlm.mode() != AgentLlm.Mode.NONE) {
                     emit(AgentState.Thinking("Drafting recommendations with ${AgentLlm.label()}..."))
-                    generateLlmResponse(query, profile, remainingCalories, remainingProtein, sortedDishes)?.let { (msg, dishes) ->
+                    generateLlmResponse(query, profile, remainingCalories, remainingProtein, sortedDishes, noFoodReason)?.let { (msg, dishes) ->
                         responseMsg = msg
                         finalDishes = dishes
                     }
                 }
+                if (noFoodReason != null) responseMsg = "$noFoodReason. $responseMsg"
                 emit(AgentState.Success(responseMsg, finalDishes))
             }
 
@@ -115,6 +150,16 @@ object MacroMateAgent {
             Log.e(TAG, "Error compiling agent response", e)
             emit(AgentState.Error("An error occurred during ReAct Agent evaluation: ${e.localizedMessage}"))
         }
+    }
+
+    /** Counts real matches for the requested food that were seen before dietary filters removed any. */
+    internal class SearchStats { var matchingSeen = 0 }
+
+    /** True when every word of [term] appears in the dish's name or description. */
+    internal fun dishMatchesFood(dish: DishItem, term: String): Boolean {
+        val text = "${dish.name} ${dish.description}".lowercase(Locale.ROOT)
+        val words = term.lowercase(Locale.ROOT).split(' ').filter { it.length >= 3 }
+        return words.isNotEmpty() && words.all { it in text }
     }
 
     /** True once fewer than 2 dishes clear a reasonable macro-fit bar — worth trying a different search angle. */
@@ -136,12 +181,15 @@ object MacroMateAgent {
         cuisinePrefs: List<String>,
         budget: BudgetTier,
         forceVeg: Boolean,
+        strict: Boolean = false,
+        foodTerm: String? = null,
+        stats: SearchStats? = null,
         emit: suspend (AgentState) -> Unit
     ): List<DishItem> {
         emit(AgentState.Thinking("Calling Tool: searchRestaurants(query=\"$searchTerm\", budget=$budget)"))
         delay(1200)
 
-        val restaurants = SwiggyClient.searchRestaurants(query = searchTerm, budget = budget)
+        val restaurants = SwiggyClient.searchRestaurants(query = searchTerm, budget = budget, strict = strict)
         emit(AgentState.Thinking("Found ${restaurants.size} restaurant candidates in your zone. Analysing menus..."))
         delay(1000)
 
@@ -160,6 +208,8 @@ object MacroMateAgent {
             val menu = SwiggyClient.getMenu(restaurant.id)
 
             for (dish in menu) {
+                if (foodTerm != null && stats != null && dishMatchesFood(dish, foodTerm)) stats.matchingSeen++
+
                 // Check allergens
                 if (containsAllergens(dish, allergensList)) {
                     Log.d(TAG, "Filtering out dish ${dish.name} because of allergy restrictions")
@@ -322,7 +372,8 @@ object MacroMateAgent {
         profile: UserProfile,
         remainingCalories: Int,
         remainingProtein: Int,
-        dishes: List<DishItem>
+        dishes: List<DishItem>,
+        caveat: String? = null
     ): Pair<String, List<DishItem>>? {
         val dishLines = dishes.mapIndexed { i, d ->
             "$i. ${d.name} (${d.restaurantName}) — P:${d.proteinG}g C:${d.carbsG}g F:${d.fatG}g ${d.calories}kcal ₹${d.price}, fit ${(d.score * 100).toInt()}%"
@@ -332,6 +383,7 @@ object MacroMateAgent {
             prompt = "The user asked: \"$query\"\n" +
                     "Their goal: ${profile.goal}. Remaining today: ${remainingCalories}kcal, ${remainingProtein}g protein.\n" +
                     "Ranked dishes:\n$dishLines\n\n" +
+                    (caveat?.let { "Important: $it, so these are only the closest macro matches — do not describe them as the requested food.\n" } ?: "") +
                     "Return JSON: {\"message\": \"<2-3 friendly sentences reacting to their request and summarizing why these picks fit>\", " +
                     "\"reasonings\": [\"<one specific sentence per dish, same order, why it suits this user right now>\"]}",
             systemInstruction = "You are MacroMate, a nutrition concierge for Swiggy food delivery in India. Respond with JSON only."

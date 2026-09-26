@@ -41,6 +41,14 @@ object SwiggyClient {
             cuisines = listOf("South Indian", "Health Eats", "Vegetarian"),
             deliveryTimeMin = 25,
             averagePrice = 180.0
+        ),
+        Restaurant(
+            id = "rest_5",
+            name = "Fit Burger Co.",
+            rating = 4.3,
+            cuisines = listOf("Burgers", "American", "Healthy", "Fast Food"),
+            deliveryTimeMin = 28,
+            averagePrice = 240.0
         )
     )
 
@@ -312,6 +320,43 @@ object SwiggyClient {
                 restaurantName = "Dakshin Flavors - High Protein South",
                 restaurantId = "rest_4"
             )
+        ),
+        "rest_5" to listOf(
+            DishItem(
+                id = "dish_5_1",
+                name = "Grilled Chicken Protein Burger",
+                description = "Lean grilled chicken patty in a whole-wheat burger bun with lettuce, tomato and light yogurt mayo.",
+                price = 229.0, proteinG = 34, carbsG = 38, fatG = 12, calories = 396,
+                deliveryTimeMin = 28, restaurantName = "Fit Burger Co.", restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_2",
+                name = "Paneer Tikka Burger (Whole Wheat)",
+                description = "Tandoori paneer tikka patty, mint chutney and crunchy onions in a whole-wheat burger bun.",
+                price = 199.0, proteinG = 22, carbsG = 42, fatG = 14, calories = 382,
+                deliveryTimeMin = 28, restaurantName = "Fit Burger Co.", restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_3",
+                name = "Double Chicken Mass Burger",
+                description = "Two grilled chicken patties, cheddar and caramelised onions in a toasted burger bun. Built for bulking.",
+                price = 329.0, proteinG = 46, carbsG = 52, fatG = 24, calories = 608,
+                deliveryTimeMin = 28, restaurantName = "Fit Burger Co.", restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_4",
+                name = "Veggie Bean & Oats Burger",
+                description = "Black bean and oats veggie patty with avocado and greens in a multigrain burger bun.",
+                price = 169.0, proteinG = 16, carbsG = 44, fatG = 9, calories = 321,
+                deliveryTimeMin = 28, restaurantName = "Fit Burger Co.", restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_5",
+                name = "Egg & Cheese Breakfast Burger",
+                description = "Fluffy egg omelette and melted cheese in a soft burger bun, served all day.",
+                price = 149.0, proteinG = 24, carbsG = 36, fatG = 15, calories = 375,
+                deliveryTimeMin = 28, restaurantName = "Fit Burger Co.", restaurantId = "rest_5"
+            )
         )
     )
 
@@ -319,29 +364,35 @@ object SwiggyClient {
     fun isLive(): Boolean = SwiggyMcpClient.isConnected()
 
     // TOOL 1 — searchRestaurants (live Swiggy MCP when connected, mock fallback)
+    /**
+     * [strict] = the caller asked for something specific (e.g. "burger"): return only genuine
+     * matches — possibly none — instead of silently broadening to unrelated restaurants, and never
+     * swap live Swiggy results for the offline demo data. Non-strict keeps the friendly fallbacks.
+     */
     suspend fun searchRestaurants(
         lat: Double = 12.9716,
         lng: Double = 77.5946,
         query: String,
         limit: Int = 4,
-        budget: BudgetTier? = null
+        budget: BudgetTier? = null,
+        strict: Boolean = false
     ): List<Restaurant> {
-        val results = if (isLive()) {
+        val live: List<Restaurant>? = if (isLive()) {
             try {
-                val live = SwiggyMcpClient.searchRestaurants(query)
-                live.ifEmpty { null }
+                SwiggyMcpClient.searchRestaurants(query)
             } catch (e: Exception) {
-                Log.w(TAG, "Live Swiggy search failed, falling back to mock", e)
+                Log.w(TAG, "Live Swiggy search failed", e)
                 null
             }
         } else null
 
-        val candidates = results ?: run {
-            val lowerQuery = query.lowercase(Locale.ROOT)
-            restaurantsList.filter { restaurant ->
-                restaurant.name.lowercase(Locale.ROOT).contains(lowerQuery) ||
-                restaurant.cuisines.any { c -> c.lowercase(Locale.ROOT).contains(lowerQuery) }
-            }.ifEmpty { restaurantsList }
+        val candidates = when {
+            live != null && (live.isNotEmpty() || strict) -> live
+            isLive() && strict -> emptyList() // connected but the search failed: don't show demo data as if it were Swiggy
+            else -> {
+                val matches = restaurantsList.filter { mockMatches(it, query) }
+                if (strict) matches else matches.ifEmpty { restaurantsList }
+            }
         }
 
         // Swiggy's search API has no price-ceiling parameter (confirmed against its own docs),
@@ -351,6 +402,15 @@ object SwiggyClient {
         } ?: candidates
 
         return budgetFiltered.take(limit)
+    }
+
+    /** Every word of the query appears in the restaurant's name, cuisines, or any of its dishes. */
+    private fun mockMatches(restaurant: Restaurant, query: String): Boolean {
+        val words = query.lowercase(Locale.ROOT).split(Regex("[^a-z]+")).filter { it.length >= 3 }
+        if (words.isEmpty()) return false
+        val menuText = menuData[restaurant.id].orEmpty().joinToString(" ") { "${it.name} ${it.description}" }
+        val haystack = "${restaurant.name} ${restaurant.cuisines.joinToString(" ")} $menuText".lowercase(Locale.ROOT)
+        return words.all { it in haystack }
     }
 
     private fun maxPriceFor(budget: BudgetTier?): Double? = when (budget) {
