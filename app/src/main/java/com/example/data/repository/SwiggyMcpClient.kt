@@ -573,6 +573,14 @@ object SwiggyMcpClient {
                 c = 52 + nameHash
                 f = 17
             }
+            t.contains("dessert") || t.contains("sweet") || t.contains("ice cream") || t.contains("kulfi") ||
+            t.contains("jamun") || t.contains("halwa") || t.contains("cake") || t.contains("pastry") ||
+            t.contains("brownie") || t.contains("pudding") || t.contains("chocolate") || t.contains("mithai") ||
+            t.contains("rasgulla") || t.contains("cookie") -> {
+                p = 3 + (nameHash.coerceAtLeast(0) / 2)
+                c = 38 + nameHash
+                f = 9 + (nameHash / 2)
+            }
             t.contains("juice") || t.contains("water") || t.contains("chaas") || t.contains("buttermilk") || t.contains("soda") -> {
                 p = if (t.contains("chaas") || t.contains("buttermilk") || t.contains("lassi")) 5 else 1
                 c = 14 + nameHash

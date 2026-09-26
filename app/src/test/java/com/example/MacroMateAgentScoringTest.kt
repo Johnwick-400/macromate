@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 
 /** Robolectric for android.util.Log inside the agent. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class MacroMateAgentScoringTest {
 
     @Test

@@ -126,6 +126,7 @@ data class SystemOneDecision(
     val budget: BudgetTier,
     val isVegetarian: Boolean,
     val searchKeyword: String,
+    val maxPriceLimit: Double? = null,
     val confidence: Float,
     val latencyMs: Long,
     val isModelDriven: Boolean = true

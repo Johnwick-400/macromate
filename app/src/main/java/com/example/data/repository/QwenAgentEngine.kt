@@ -70,7 +70,7 @@ object QwenAgentEngine {
             } else {
                 Log.w(TAG, "Model file $MODEL_FILE not found in assets, using fast-path engine")
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Failed to initialize Qwen ONNX session, falling back to internal engine", e)
             isModelLoaded = false
         } finally {
@@ -141,6 +141,7 @@ object QwenAgentEngine {
             }
 
             val keyword = deriveKeyword(query, goal, isVeg)
+            val maxPrice = extractMaxPrice(query)
             val confidence = softmaxMax(goalLogits)
             val latency = System.currentTimeMillis() - startTimeMs
 
@@ -152,6 +153,7 @@ object QwenAgentEngine {
                 budget = budget,
                 isVegetarian = isVeg,
                 searchKeyword = keyword,
+                maxPriceLimit = maxPrice,
                 confidence = confidence,
                 latencyMs = latency,
                 isModelDriven = true
@@ -166,9 +168,12 @@ object QwenAgentEngine {
         startTimeMs: Long
     ): SystemOneDecision {
         val q = query.lowercase(Locale.ROOT)
-        val isVeg = q.contains("veg") || q.contains("paneer") || q.contains("tofu") || q.contains("soya") || q.contains("dal")
+        val maxPrice = extractMaxPrice(query)
+        val isDessert = q.contains("dessert") || q.contains("sweet") || q.contains("craving") || q.contains("ice cream")
+        val isVeg = q.contains("veg") || q.contains("paneer") || q.contains("tofu") || q.contains("soya") || q.contains("dal") || isDessert
 
         val goal = when {
+            isDessert -> MealGoalType.LOW_CALORIE_CLEAN
             q.contains("keto") || q.contains("low carb") -> MealGoalType.KETO_FAT_LOSS
             q.contains("bulk") || q.contains("mass") || q.contains("biryani") -> MealGoalType.LEAN_MASS_BULK
             q.contains("light") || q.contains("salad") || q.contains("soup") || q.contains("diet") -> MealGoalType.LOW_CALORIE_CLEAN
@@ -178,6 +183,9 @@ object QwenAgentEngine {
         }
 
         val budget = when {
+            maxPrice != null && maxPrice <= 200.0 -> BudgetTier.BUDGET_UNDER_200
+            maxPrice != null && maxPrice <= 400.0 -> BudgetTier.STANDARD_UNDER_400
+            maxPrice != null -> BudgetTier.PREMIUM_UNRESTRICTED
             q.contains("150") || q.contains("200") || q.contains("cheap") -> BudgetTier.BUDGET_UNDER_200
             q.contains("luxury") || q.contains("expensive") -> BudgetTier.PREMIUM_UNRESTRICTED
             else -> BudgetTier.STANDARD_UNDER_400
@@ -191,17 +199,44 @@ object QwenAgentEngine {
             budget = budget,
             isVegetarian = isVeg,
             searchKeyword = keyword,
+            maxPriceLimit = maxPrice,
             confidence = 0.95f,
             latencyMs = latency,
             isModelDriven = false
         )
     }
 
+    fun extractMaxPrice(query: String): Double? {
+        val pattern = Regex("""(?:under|below|less than|within|max|<|<=|₹|rs\.?)\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(query) ?: return null
+        return match.groupValues[1].toDoubleOrNull()
+    }
+
     private fun deriveKeyword(query: String, goal: MealGoalType, isVeg: Boolean): String {
         val q = query.lowercase(Locale.ROOT)
-        for (item in listOf("biryani", "paneer", "chicken", "salad", "khichdi", "soup", "omelette", "tikka", "roll", "juice", "chaas", "dosa", "fish", "mutton")) {
+
+        // 1. Explicit Sweets / Desserts / Cravings
+        for (item in listOf(
+            "dessert", "sweet", "ice cream", "kulfi", "gulab jamun", "brownie",
+            "cake", "pastry", "halwa", "rasgulla", "chocolate", "pudding", "donut"
+        )) {
             if (q.contains(item)) return item
         }
+        if (q.contains("craving") || q.contains("sugar") || q.contains("mithai")) {
+            return "dessert"
+        }
+
+        // 2. Specific Dishes & Staples
+        for (item in listOf(
+            "biryani", "pulao", "khichdi", "paneer", "chicken", "mutton", "fish", "prawn",
+            "salad", "sprouts", "soup", "omelette", "bhurji", "egg", "tikka", "kebab",
+            "roll", "wrap", "sandwich", "burger", "pizza", "momos", "maggi", "noodles",
+            "dosa", "idli", "vada", "upma", "poha", "paratha", "roti", "dal", "curry",
+            "juice", "shake", "smoothie", "chaas", "buttermilk", "lassi", "coffee", "tea"
+        )) {
+            if (q.contains(item)) return item
+        }
+
         return when (goal) {
             MealGoalType.HIGH_PROTEIN -> if (isVeg) "high protein paneer" else "high protein chicken"
             MealGoalType.KETO_FAT_LOSS -> if (isVeg) "keto paneer salad" else "keto chicken salad"

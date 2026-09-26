@@ -40,6 +40,14 @@ object SwiggyClient {
             cuisines = listOf("South Indian", "Health Eats", "Vegetarian"),
             deliveryTimeMin = 25,
             averagePrice = 180.0
+        ),
+        Restaurant(
+            id = "rest_5",
+            name = "Milano Sweet Treats & Healthy Desserts",
+            rating = 4.6,
+            cuisines = listOf("Dessert", "Desserts", "Sweets", "Sweet", "Ice Cream", "Bakery", "Healthy Sweets"),
+            deliveryTimeMin = 15,
+            averagePrice = 85.0
         )
     )
 
@@ -310,6 +318,60 @@ object SwiggyClient {
                 deliveryTimeMin = 25,
                 restaurantName = "Dakshin Flavors - High Protein South",
                 restaurantId = "rest_4"
+            )
+        ),
+        "rest_5" to listOf(
+            DishItem(
+                id = "dish_5_1",
+                name = "Low-Calorie Kesar Pista Kulfi",
+                description = "Traditional slow-cooked skimmed milk kulfi infused with Kashmiri saffron and crunchy pistachios with zero refined sugar.",
+                price = 79.0,
+                proteinG = 6,
+                carbsG = 16,
+                fatG = 4,
+                calories = 124,
+                deliveryTimeMin = 15,
+                restaurantName = "Milano Sweet Treats & Healthy Desserts",
+                restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_2",
+                name = "Sugar-Free Dark Chocolate Brownie",
+                description = "Rich 70% dark cocoa warm brownie sweetened with organic stevia, topped with roasted almond flakes.",
+                price = 89.0,
+                proteinG = 5,
+                carbsG = 22,
+                fatG = 7,
+                calories = 171,
+                deliveryTimeMin = 15,
+                restaurantName = "Milano Sweet Treats & Healthy Desserts",
+                restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_3",
+                name = "Healthy Jaggery Gulab Jamun (2 pcs)",
+                description = "Mouth-watering warm chenna dumplings sweetened with pure organic palm jaggery syrup and cardamom.",
+                price = 69.0,
+                proteinG = 4,
+                carbsG = 28,
+                fatG = 5,
+                calories = 173,
+                deliveryTimeMin = 15,
+                restaurantName = "Milano Sweet Treats & Healthy Desserts",
+                restaurantId = "rest_5"
+            ),
+            DishItem(
+                id = "dish_5_4",
+                name = "Fresh Strawberry Greek Yogurt Cup",
+                description = "Probiotic-rich thick hung curd infused with real strawberry compote and organic chia seeds.",
+                price = 99.0,
+                proteinG = 11,
+                carbsG = 14,
+                fatG = 2,
+                calories = 118,
+                deliveryTimeMin = 15,
+                restaurantName = "Milano Sweet Treats & Healthy Desserts",
+                restaurantId = "rest_5"
             )
         )
     )

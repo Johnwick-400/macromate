@@ -63,7 +63,7 @@ object MacroMateAgent {
 
             var matchingDishes = runSearchPass(
                 searchTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                allergensList, cuisinePrefs
+                allergensList, cuisinePrefs, decision.maxPriceLimit
             ) { emit(it) }
 
             // Agentic retry: one bounded re-search from a different angle if results are weak
@@ -75,7 +75,7 @@ object MacroMateAgent {
                     emit(AgentState.Thinking("Retrying with refined query: \"$altTerm\""))
                     val retryDishes = runSearchPass(
                         altTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                        allergensList, cuisinePrefs
+                        allergensList, cuisinePrefs, decision.maxPriceLimit
                     ) { emit(it) }
                     matchingDishes = (matchingDishes + retryDishes).distinctBy { it.id }
                 }
@@ -126,6 +126,7 @@ object MacroMateAgent {
         remainingFat: Int,
         allergensList: List<String>,
         cuisinePrefs: List<String>,
+        maxPriceLimit: Double? = null,
         emit: suspend (AgentState) -> Unit
     ): List<DishItem> {
         emit(AgentState.Thinking("Calling Tool: searchRestaurants(query=\"$searchTerm\")"))
@@ -166,13 +167,25 @@ object MacroMateAgent {
                     continue
                 }
 
+                // Hard user budget limit filter (e.g. "under 100 rs")
+                if (maxPriceLimit != null && dish.price > maxPriceLimit) {
+                    Log.d(TAG, "Filtering out dish ${dish.name} (₹${dish.price}) exceeding user limit ₹$maxPriceLimit")
+                    continue
+                }
+
+                val isDessert = searchTerm.contains("dessert") || searchTerm.contains("sweet") ||
+                        searchTerm.contains("ice cream") || searchTerm.contains("kulfi") ||
+                        searchTerm.contains("cake") || searchTerm.contains("halwa") || searchTerm.contains("mithai")
+
+                val targetP = if (isDessert) 4 else mealTarget(remainingProtein, profile.dailyProteinG)
+
                 val baseScore = calculateMacroScore(
                     dish,
                     targetCalories = mealTarget(remainingCalories, profile.dailyCalories),
-                    targetProtein = mealTarget(remainingProtein, profile.dailyProteinG),
+                    targetProtein = targetP,
                     targetCarbs = mealTarget(remainingCarbs, profile.dailyCarbsG),
                     targetFat = mealTarget(remainingFat, profile.dailyFatG),
-                    targetPrice = restaurant.averagePrice
+                    targetPrice = maxPriceLimit ?: restaurant.averagePrice
                 )
 
                 // Boost for preferred cuisine
