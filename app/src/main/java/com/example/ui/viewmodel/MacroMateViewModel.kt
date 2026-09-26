@@ -12,11 +12,15 @@ import com.example.data.repository.AgentState
 import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.LayaDecisionEngine
 import com.example.data.repository.MacroMateRepository
+import com.example.data.repository.QwenLlm
+import com.example.data.repository.QwenState
 import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
 import com.example.data.repository.SwiggyClient
 import com.example.data.repository.SwiggyMcpClient
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -59,6 +63,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         _swiggyLinked.value = SwiggyMcpClient.isConnected()
         _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
         LayaDecisionEngine.init(application)
+        QwenLlm.init(application)
     }
 
     fun connectSwiggy() {
@@ -112,6 +117,27 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
     fun selectSwiggyAddress(address: SwiggyAddress) {
         SwiggyMcpClient.setActiveAddress(address)
         _activeSwiggyAddress.value = SwiggyMcpClient.getActiveAddressDisplay()
+    }
+
+    // --- On-device Qwen model (download / status) ---
+    val qwenState: StateFlow<QwenState> = QwenLlm.state
+    private var qwenDownloadJob: Job? = null
+
+    /** Downloads the ~1.6 GB model; resumes a partial download. The app must stay open meanwhile. */
+    fun downloadQwenModel() {
+        if (qwenDownloadJob?.isActive == true) return
+        qwenDownloadJob = viewModelScope.launch { QwenLlm.download() }
+    }
+
+    fun cancelQwenDownload() { qwenDownloadJob?.cancel() }
+
+    fun deleteQwenModel() {
+        viewModelScope.launch(Dispatchers.IO) { QwenLlm.delete() }
+    }
+
+    override fun onCleared() {
+        QwenLlm.release()
+        super.onCleared()
     }
 
     // --- SharedPreferences & Current User ---

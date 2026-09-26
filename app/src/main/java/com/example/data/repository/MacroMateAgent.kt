@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.util.Log
 import com.example.data.model.BudgetTier
 import com.example.data.model.DishItem
+import com.example.data.model.SystemOneDecision
 import com.example.data.model.Restaurant
 import com.example.data.model.UserProfile
 import kotlinx.coroutines.delay
@@ -59,16 +60,25 @@ object MacroMateAgent {
             val searchTerm = decision.searchKeyword
             val forceVeg = decision.isVegetarianForced
 
+            if (AgentLlm.mode() == AgentLlm.Mode.LOCAL) {
+                emit(AgentState.Thinking(
+                    if (QwenLlm.state.value.phase == QwenPhase.READY) "🧠 Qwen 2.5 (on-device) is planning..."
+                    else "🧠 Loading Qwen 2.5 on-device (first use takes a little while)..."
+                ))
+                planThought(query, profile, decision, remainingCalories, remainingProtein)
+                    ?.let { emit(AgentState.Thinking("💭 $it")) }
+            }
+
             var matchingDishes = runSearchPass(
                 searchTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
                 allergensList, cuisinePrefs, decision.budget, forceVeg
             ) { emit(it) }
 
             // Agentic retry: one bounded re-search from a different angle if results are weak
-            if (needsRetry(matchingDishes) && RestGeminiClient.isApiKeyAvailable()) {
+            if (needsRetry(matchingDishes) && AgentLlm.mode() != AgentLlm.Mode.NONE) {
                 val altTerm = suggestAlternativeSearch(query, searchTerm, profile)
                 if (altTerm != null && !altTerm.equals(searchTerm, ignoreCase = true)) {
-                    emit(AgentState.Thinking("Only ${matchingDishes.size} strong matches for \"$searchTerm\" — asking Gemini for a different angle..."))
+                    emit(AgentState.Thinking("Only ${matchingDishes.size} strong matches for \"$searchTerm\" — asking ${AgentLlm.label()} for a different angle..."))
                     delay(400)
                     emit(AgentState.Thinking("Retrying with refined query: \"$altTerm\""))
                     val retryDishes = runSearchPass(
@@ -91,9 +101,9 @@ object MacroMateAgent {
                 var responseMsg = "I have successfully compiled the top ${sortedDishes.size} Swiggy dishes matching your strict target goals!"
                 var finalDishes = sortedDishes
 
-                if (RestGeminiClient.isApiKeyAvailable()) {
-                    emit(AgentState.Thinking("Calling Gemini to draft personalized recommendations..."))
-                    generateGeminiResponse(query, profile, remainingCalories, remainingProtein, sortedDishes)?.let { (msg, dishes) ->
+                if (AgentLlm.mode() != AgentLlm.Mode.NONE) {
+                    emit(AgentState.Thinking("Drafting recommendations with ${AgentLlm.label()}..."))
+                    generateLlmResponse(query, profile, remainingCalories, remainingProtein, sortedDishes)?.let { (msg, dishes) ->
                         responseMsg = msg
                         finalDishes = dishes
                     }
@@ -198,9 +208,25 @@ object MacroMateAgent {
         return matchingDishes
     }
 
+    /** One-sentence plan written by the on-device model — the "Thought" of this ReAct cycle. */
+    private suspend fun planThought(
+        query: String,
+        profile: UserProfile,
+        decision: SystemOneDecision,
+        remainingCalories: Int,
+        remainingProtein: Int
+    ): String? = QwenLlm.generate(
+        system = "You are the planning step of a food-ordering agent. Reply with exactly one sentence, at most 30 words, no preamble.",
+        prompt = "User request: \"$query\". Goal: ${profile.goal}. Remaining today: ${remainingCalories} kcal, ${remainingProtein}g protein. " +
+                "Fast classifier says: ${decision.goal}, budget ${decision.budget}, " +
+                "${if (decision.isVegetarianForced) "vegetarian" else "any diet"}, search \"${decision.searchKeyword}\". " +
+                "State your plan for finding meals.",
+        maxTokens = 60
+    )?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
+
     /** Asks for a different search angle after a weak first pass. Null on any failure. */
     private suspend fun suggestAlternativeSearch(originalQuery: String, triedTerm: String, profile: UserProfile): String? {
-        val json = RestGeminiClient.generateJson(
+        val json = AgentLlm.generateJson(
             prompt = "User asked: \"$originalQuery\" (goal: ${profile.goal}). " +
                     "Searching \"$triedTerm\" returned too few dishes that fit their macros well.\n" +
                     "Suggest ONE different search keyword/cuisine angle to try instead " +
@@ -291,7 +317,7 @@ object MacroMateAgent {
      * One batched Gemini call: conversational response + one specific reasoning per dish.
      * Returns null on any failure so the template fallback below kicks in.
      */
-    private suspend fun generateGeminiResponse(
+    private suspend fun generateLlmResponse(
         query: String,
         profile: UserProfile,
         remainingCalories: Int,
@@ -302,7 +328,7 @@ object MacroMateAgent {
             "$i. ${d.name} (${d.restaurantName}) — P:${d.proteinG}g C:${d.carbsG}g F:${d.fatG}g ${d.calories}kcal ₹${d.price}, fit ${(d.score * 100).toInt()}%"
         }.joinToString("\n")
 
-        val json = RestGeminiClient.generateJson(
+        val json = AgentLlm.generateJson(
             prompt = "The user asked: \"$query\"\n" +
                     "Their goal: ${profile.goal}. Remaining today: ${remainingCalories}kcal, ${remainingProtein}g protein.\n" +
                     "Ranked dishes:\n$dishLines\n\n" +

@@ -491,7 +491,7 @@ object SwiggyMcpClient {
 
     /** One batched Gemini call per menu; null when no API key / parse failure. */
     private suspend fun estimateMacrosWithGemini(dishes: List<DishItem>): List<DishItem>? {
-        if (!RestGeminiClient.isApiKeyAvailable()) return null
+        if (AgentLlm.mode() != AgentLlm.Mode.CLOUD) return null // local Qwen is too slow for whole menus: use the heuristic
         val menu = dishes.mapIndexed { i, d -> "$i. ${d.name} — ${d.description.take(120)}" }.joinToString("\n")
         val json = RestGeminiClient.generateJson(
             prompt = "Estimate nutrition per single serving for each restaurant dish below. " +

@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.ChatMessage
+import com.example.data.repository.AgentLlm
 import com.example.data.model.DishItem
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MacroMateViewModel
@@ -152,7 +153,15 @@ fun ChatScreen(
                     }
                 }
 
-                // Small badge highlighting active on-device Qwen model
+                // Badge showing which model actually powers the agent right now
+                val qwen by viewModel.qwenState.collectAsState()
+                val brainLabel = remember(qwen) {
+                    when (AgentLlm.mode()) {
+                        AgentLlm.Mode.LOCAL -> "QWEN 2.5 · ON-DEVICE"
+                        AgentLlm.Mode.CLOUD -> "GEMINI · CLOUD"
+                        AgentLlm.Mode.NONE -> "OFFLINE"
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -160,7 +169,7 @@ fun ChatScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "QWEN 2.5 SLM",
+                        text = brainLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = NeonEmerald,
                         fontWeight = FontWeight.Bold

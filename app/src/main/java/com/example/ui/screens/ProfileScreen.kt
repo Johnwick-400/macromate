@@ -339,6 +339,9 @@ fun ProfileScreen(
                 }
             }
 
+            // Section: on-device Qwen model status / download
+            item { QwenModelCard(viewModel) }
+
             // Section 3: Past Orders with Breakdown
             item {
                 Text(
