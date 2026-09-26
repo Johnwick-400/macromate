@@ -451,7 +451,7 @@ object SwiggyMcpClient {
             val o = arr.optJSONObject(i) ?: continue
             val id = firstString(o, "restaurantId", "id") ?: continue
             val name = firstString(o, "name", "restaurantName") ?: continue
-            if (o.optString("availabilityStatus").equals("CLOSED", true)) continue
+            if (!isRestaurantOrderable(o)) continue
 
             val cuisines = o.optJSONArray("cuisines")?.let { c ->
                 (0 until c.length()).mapNotNull { c.optString(it).takeIf(String::isNotBlank) }
@@ -494,7 +494,7 @@ object SwiggyMcpClient {
                 val price = node.optDouble("price", node.optDouble("defaultPrice", -1.0))
                 if (name.isNotBlank() && price >= 0) {
                     // Swiggy lists out-of-stock dishes too; they can't be ordered, so never recommend them.
-                    if (node.optInt("inStock", 1) == 0) return
+                    if (!isDishOrderable(node)) return
                     out.add(
                         DishItem(
                             id = firstString(node, "itemId", "id", "dishId") ?: "$restaurantId-${name.hashCode()}",
@@ -511,6 +511,24 @@ object SwiggyMcpClient {
             is JSONArray -> for (i in 0 until node.length()) collectDishes(node.opt(i), restaurantId, out, depth + 1)
         }
     }
+
+    /** A flag counts as "off" when it is 0, false, "0" or "false" in any of the given keys; absent keys mean "on". */
+    private fun isFlagOff(o: JSONObject, vararg keys: String): Boolean = keys.any { k ->
+        o.has(k) && when (val v = o.opt(k)) {
+            is Boolean -> !v
+            is Number -> v.toInt() == 0
+            is String -> v == "0" || v.equals("false", true)
+            else -> false
+        }
+    }
+
+    internal fun isDishOrderable(dish: JSONObject): Boolean =
+        !isFlagOff(dish, "inStock", "in_stock", "isAvailable", "available") &&
+            !dish.optString("availabilityStatus").let { it.equals("OUT_OF_STOCK", true) || it.equals("UNAVAILABLE", true) }
+
+    internal fun isRestaurantOrderable(r: JSONObject): Boolean =
+        !isFlagOff(r, "isOpen", "open", "isAvailable", "available") &&
+            r.optString("availabilityStatus").let { !it.equals("CLOSED", true) && !it.contains("UNSERVICEABLE", true) }
 
     /** Swiggy APIs often quote prices in paise. */
     internal fun normalizePrice(price: Double): Double = if (price >= 5000) price / 100 else price

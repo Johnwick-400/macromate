@@ -222,20 +222,21 @@ fun CartScreen(
                     ) {
                         Button(
                             onClick = {
-                                viewModel.sendCartToSwiggy { synced, message, restaurantId ->
-                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                    if (synced && restaurantId != null) {
-                                        // Swiggy's app has no working "open cart" link; the restaurant's menu page
-                                        // shows the "View cart" bar with the items we just added.
-                                        try {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, "swiggy://menu?restaurant_id=$restaurantId".toUri())
-                                            )
-                                        } catch (_: Exception) {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, "https://www.swiggy.com/menu/$restaurantId".toUri())
-                                            )
-                                        }
+                                viewModel.confirmCartAndPlaceOrder { syncedToSwiggy, restaurantId ->
+                                    Toast.makeText(
+                                        context,
+                                        if (syncedToSwiggy) "Items added to your Swiggy cart — opening Swiggy..."
+                                        else "Opening Swiggy (connect your account in Profile to sync items directly)",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+
+                                    // Swiggy has no working "open cart" link, so open the restaurant the items were
+                                    // added from (or the app itself when nothing could be synced).
+                                    val target = if (syncedToSwiggy && restaurantId != null) "swiggy://menu?restaurant_id=$restaurantId" else "swiggy://home"
+                                    try {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, target.toUri()))
+                                    } catch (_: Exception) {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, "https://www.swiggy.com/".toUri()))
                                     }
                                 }
                             },
@@ -253,7 +254,7 @@ fun CartScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "Add to Swiggy Cart",
+                                "Confirm & Order on Swiggy",
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
                                 fontSize = 16.sp

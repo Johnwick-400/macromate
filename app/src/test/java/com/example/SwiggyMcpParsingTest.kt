@@ -72,4 +72,19 @@ class SwiggyMcpParsingTest {
         assertEquals(180.0, dishes.first { it.id == "d2" }.price, 0.001)
         assertTrue(dishes.all { it.restaurantId == "r1" })
     }
+
+    @Test
+    fun `out of stock dishes and closed restaurants are filtered out`() {
+        val data = JSONObject("""{"items":[
+            {"id":"1","name":"In stock","price":100,"inStock":1},
+            {"id":"2","name":"Sold out","price":100,"inStock":0},
+            {"id":"3","name":"Sold out flag","price":100,"in_stock":false},
+            {"id":"4","name":"Sold out string","price":100,"inStock":"0"},
+            {"id":"5","name":"No flag","price":100}]}""")
+        assertEquals(listOf("In stock", "No flag"), SwiggyMcpClient.parseMenuDishes(data, "r1").map { it.name })
+
+        assertTrue(SwiggyMcpClient.isRestaurantOrderable(JSONObject("""{"availabilityStatus":"OPEN"}""")))
+        assertTrue(!SwiggyMcpClient.isRestaurantOrderable(JSONObject("""{"availabilityStatus":"CLOSED"}""")))
+        assertTrue(!SwiggyMcpClient.isRestaurantOrderable(JSONObject("""{"isOpen":false}""")))
+    }
 }
