@@ -34,6 +34,18 @@ import com.example.ui.viewmodel.MacroMateViewModel
 class MainActivity : ComponentActivity() {
     private val viewModel: MacroMateViewModel by viewModels()
 
+    // Sample motion sensors only while the app is on screen; the hardware step counter
+    // (when available) catches up on steps taken in between at the next start.
+    override fun onStart() {
+        super.onStart()
+        viewModel.startStepTracking()
+    }
+
+    override fun onStop() {
+        viewModel.stopStepTracking()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
