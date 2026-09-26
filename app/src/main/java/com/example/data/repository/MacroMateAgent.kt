@@ -49,11 +49,16 @@ object MacroMateAgent {
             Log.d(TAG, "Allergen list for filtering: $allergensList")
             Log.d(TAG, "Cuisine preferences: $cuisinePrefs")
 
-            var searchTerm = query
-            if (RestGeminiClient.isApiKeyAvailable()) {
-                emit(AgentState.Thinking("Interpreting your request with Gemini..."))
+            // System 1 Decision Model (On-Device Laya Architecture)
+            val decision = LayaDecisionEngine.evaluateIntent(query, remainingProtein, remainingCalories)
+            val engineTag = if (decision.isModelDriven) "Laya NPU (${decision.latencyMs}ms)" else "Fast-Path (<1ms)"
+            emit(AgentState.Thinking("⚡ System 1 Decision [$engineTag]: ${decision.goal} · ${decision.budget}"))
+            var searchTerm = decision.searchKeyword
+
+            if (RestGeminiClient.isApiKeyAvailable() && !decision.isModelDriven) {
+                emit(AgentState.Thinking("Refining search term with Gemini..."))
                 interpretSearchQuery(query, profile)?.let { searchTerm = it }
-                delay(400)
+                delay(300)
             }
 
             var matchingDishes = runSearchPass(

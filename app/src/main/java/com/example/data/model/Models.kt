@@ -106,3 +106,27 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val results: List<DishItem> = emptyList() // If any results are attached to this message
 )
+
+enum class MealGoalType {
+    HIGH_PROTEIN,
+    KETO_FAT_LOSS,
+    LEAN_MASS_BULK,
+    LOW_CALORIE_CLEAN,
+    QUICK_HYDRATION_SNACK
+}
+
+enum class BudgetTier {
+    BUDGET_UNDER_200,
+    STANDARD_UNDER_400,
+    PREMIUM_UNRESTRICTED
+}
+
+data class SystemOneDecision(
+    val goal: MealGoalType,
+    val budget: BudgetTier,
+    val isVegetarian: Boolean,
+    val searchKeyword: String,
+    val confidence: Float,
+    val latencyMs: Long,
+    val isModelDriven: Boolean = true
+)

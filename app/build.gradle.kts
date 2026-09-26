@@ -95,6 +95,7 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.mlkit.genai.prompt)
   implementation(libs.mlkit.genai.schema)
+  implementation(libs.onnxruntime.android)
   "ksp"(libs.mlkit.genai.schema.compiler)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
