@@ -98,15 +98,6 @@ data class SwiggyAddress(
     val line: String
 )
 
-data class ChatMessage(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    val sender: String = "AI", // "USER" or "AI" or "SYSTEM" or "THINKING"
-    val content: String,
-    val reasoningSteps: List<String> = emptyList(),
-    val timestamp: Long = System.currentTimeMillis(),
-    val results: List<DishItem> = emptyList() // If any results are attached to this message
-)
-
 enum class MealGoalType {
     HIGH_PROTEIN,
     KETO_FAT_LOSS,
@@ -121,12 +112,27 @@ enum class BudgetTier {
     PREMIUM_UNRESTRICTED
 }
 
+/**
+ * Output of the on-device "System 1" decision engine ([LayaDecisionEngine]). [usedOnnxModel]
+ * is true only when the bundled laya_decision.onnx actually ran inference — false means the
+ * deterministic rule-based fallback answered instead (model/vocab missing, or inference
+ * threw), so callers/UI can report which path actually produced a given decision honestly.
+ */
 data class SystemOneDecision(
     val goal: MealGoalType,
     val budget: BudgetTier,
-    val isVegetarian: Boolean,
     val searchKeyword: String,
+    val isVegetarianForced: Boolean,
     val confidence: Float,
     val latencyMs: Long,
-    val isModelDriven: Boolean = true
+    val usedOnnxModel: Boolean
+)
+
+data class ChatMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val sender: String = "AI", // "USER" or "AI" or "SYSTEM" or "THINKING"
+    val content: String,
+    val reasoningSteps: List<String> = emptyList(),
+    val timestamp: Long = System.currentTimeMillis(),
+    val results: List<DishItem> = emptyList() // If any results are attached to this message
 )

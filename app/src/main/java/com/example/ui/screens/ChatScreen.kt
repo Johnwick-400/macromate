@@ -59,6 +59,7 @@ fun ChatScreen(
     val isAgentThinking by viewModel.isAgentThinking.collectAsState()
     val thinkingSteps by viewModel.thinkingSteps.collectAsState()
     val activeResults by viewModel.activeResults.collectAsState()
+    val cart by viewModel.cart.collectAsState()
 
     var inputQuery by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -366,13 +367,21 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(activeResults, key = { it.id }) { dish ->
+                        val quantityInCart = cart.find { it.dish.id == dish.id }?.quantity ?: 0
                         SwipeableMealCard(
                             dish = dish,
+                            quantityInCart = quantityInCart,
                             onDismiss = {
                                 viewModel.dismissResult(dish.id)
                             },
                             onAddToCart = {
                                 viewModel.addItemToCart(dish)
+                            },
+                            onIncrease = {
+                                viewModel.addItemToCart(dish)
+                            },
+                            onDecrease = {
+                                viewModel.updateCartQuantity(dish.id, -1)
                             },
                             onWhyRequired = {
                                 infoDialogDish = dish
@@ -594,8 +603,11 @@ fun ChatBubble(message: ChatMessage, modifier: Modifier = Modifier) {
 @Composable
 fun SwipeableMealCard(
     dish: DishItem,
+    quantityInCart: Int,
     onDismiss: () -> Unit,
     onAddToCart: () -> Unit,
+    onIncrease: () -> Unit,
+    onDecrease: () -> Unit,
     onWhyRequired: () -> Unit
 ) {
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -713,23 +725,83 @@ fun SwipeableMealCard(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Add To Cart
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(NeonEmerald)
-                        .tactilePress(onAddToCart)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AddShoppingCart,
-                        contentDescription = "Add",
-                        tint = Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Add to cart", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                // Add To Cart — flips to "Added ✓" + quantity stepper once in cart
+                if (quantityInCart <= 0) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NeonEmerald)
+                            .tactilePress(onAddToCart)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddShoppingCart,
+                            contentDescription = "Add",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add to cart", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Added",
+                            tint = NeonEmerald,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Added", color = NeonEmerald, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        // Quantity stepper
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, NeonEmerald, RoundedCornerShape(8.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .tactilePress(onDecrease),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Remove,
+                                    contentDescription = "Decrease",
+                                    tint = NeonEmerald,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            Text(
+                                text = quantityInCart.toString(),
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.widthIn(min = 22.dp)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .tactilePress(onIncrease),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Increase",
+                                    tint = NeonEmerald,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
