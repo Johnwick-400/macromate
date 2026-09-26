@@ -11,12 +11,18 @@ import android.net.Uri
 import com.example.data.repository.AgentState
 import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.MacroMateRepository
+import com.example.data.repository.MealConstraints
 import com.example.data.repository.NanoFoodEstimate
 import com.example.data.repository.RestGeminiClient
 import com.example.data.repository.SwiggyClient
 import com.example.data.repository.SwiggyMcpClient
+import com.example.voice.BuddyContext
+import com.example.voice.SpeechManager
+import com.example.voice.VoiceBrainProvider
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -428,17 +434,21 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                         _isAgentThinking.value = false
                         val currentThinking = _thinkingSteps.value
 
-                        // Generate beautiful AI markdown detailing reasoning to render
-                        val cleanMessageContent = generateHtmlLikeResponse(agentState.message, agentState.results)
+                        // Hard-constraint post-filter (price/calorie/veg). No-op when the query
+                        // has none, so the existing behavior is unchanged for normal requests.
+                        val (finalResults, note) = applyConstraints(text, agentState.results)
+                        val baseMessage = if (note != null) "$note\n\n${agentState.message}" else agentState.message
+
+                        val cleanMessageContent = generateHtmlLikeResponse(baseMessage, finalResults)
 
                         val aiMessage = ChatMessage(
                             sender = "AI",
                             content = cleanMessageContent,
                             reasoningSteps = currentThinking,
-                            results = agentState.results
+                            results = finalResults
                         )
                         _chatMessages.update { oldList -> oldList + aiMessage }
-                        _activeResults.value = agentState.results
+                        _activeResults.value = finalResults
                     }
                     is AgentState.Error -> {
                         _isAgentThinking.value = false
@@ -463,6 +473,188 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             sb.append("   - *AI Feedback*: ${dish.aiReasoning.take(130)}...\n")
         }
         return sb.toString()
+    }
+
+    /**
+     * Applies hard constraints (price/calorie/veg) to a scored list. Returns the filtered list
+     * plus an optional user-facing note. Falls back gracefully: if strict filtering removes
+     * everything, keeps the original results and says so rather than showing an empty screen.
+     */
+    private fun applyConstraints(query: String, results: List<DishItem>): Pair<List<DishItem>, String?> {
+        val c = MealConstraints.parse(query)
+        if (!c.hasAny || results.isEmpty()) return results to null
+        val strict = c.filter(results)
+        return if (strict.isNotEmpty()) {
+            strict to "Filtered to ${c.describe()}."
+        } else {
+            results to "Nothing matched ${c.describe()} exactly — here are the closest picks."
+        }
+    }
+
+    // ==========================================================================================
+    // Voice Assistant ("Buddy") — additive layer over the existing agent. Reuses runAgent and
+    // the same chat/results state; leaves typed chat, cart, tracker, and profile flows untouched.
+    // ==========================================================================================
+
+    enum class VoiceState { IDLE, LISTENING, WORKING, ANSWERED, ERROR }
+
+    private val speech: SpeechManager by lazy { SpeechManager(getApplication()) }
+
+    private val _voiceState = MutableStateFlow(VoiceState.IDLE)
+    val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
+
+    private val _voiceTranscript = MutableStateFlow("")
+    val voiceTranscript: StateFlow<String> = _voiceTranscript.asStateFlow()
+
+    // Buddy's spoken filler lines shown during the WORKING state.
+    private val _voiceFiller = MutableStateFlow<List<String>>(emptyList())
+    val voiceFiller: StateFlow<List<String>> = _voiceFiller.asStateFlow()
+
+    // Final spoken answer summary shown/read in the ANSWERED state.
+    private val _voiceAnswer = MutableStateFlow("")
+    val voiceAnswer: StateFlow<String> = _voiceAnswer.asStateFlow()
+
+    private val _voiceError = MutableStateFlow<String?>(null)
+    val voiceError: StateFlow<String?> = _voiceError.asStateFlow()
+
+    private var fillerJob: Job? = null
+
+    /** Opens Buddy and immediately starts listening. */
+    fun startVoiceListening() {
+        _voiceError.value = null
+        _voiceTranscript.value = ""
+        _voiceFiller.value = emptyList()
+        _voiceAnswer.value = ""
+        _voiceState.value = VoiceState.LISTENING
+        speech.startListening(
+            onPartial = { partial -> _voiceTranscript.value = partial },
+            onResult = { text ->
+                _voiceTranscript.value = text
+                runVoiceQuery(text)
+            },
+            onError = { err ->
+                _voiceError.value = err
+                _voiceState.value = VoiceState.ERROR
+            }
+        )
+    }
+
+    fun stopVoiceListening() = speech.stopListening()
+
+    /** Closes Buddy and stops any speech in progress. */
+    fun dismissVoice() {
+        fillerJob?.cancel()
+        speech.stopListening()
+        speech.stopSpeaking()
+        _voiceState.value = VoiceState.IDLE
+    }
+
+    /**
+     * Dual-track latency masking: TRACK A runs the real meal search in the background; TRACK B
+     * (fillerJob) speaks personal small-talk meanwhile. When A finishes, B is cancelled and
+     * Buddy delivers the answer. The result is also injected into the normal chat + results so
+     * the existing Add-to-cart UI renders it.
+     */
+    private fun runVoiceQuery(text: String) {
+        _voiceState.value = VoiceState.WORKING
+
+        // Also reflect the spoken query in the text chat, mirroring sendMessage's user bubble.
+        _chatMessages.update { it + ChatMessage(sender = "USER", content = text) }
+
+        // TRACK B — filler small-talk while the search runs.
+        fillerJob = viewModelScope.launch {
+            val brain = VoiceBrainProvider.resolve()
+            val asked = mutableListOf<String>()
+            delay(600)
+            while (isActive) {
+                val ctx = buildBuddyContext()
+                val line = brain.nextFiller(ctx, asked)
+                asked += line
+                _voiceFiller.update { it + line }
+                speech.speak(line)
+                delay(6000)
+            }
+        }
+
+        // TRACK A — the real agent search.
+        viewModelScope.launch {
+            val profile = userProfile.value ?: UserProfile()
+            val consumed = getConsumedMacros()
+            val remCal = Math.max(0, profile.dailyCalories - consumed.calories)
+            val remP = Math.max(0, profile.dailyProteinG - consumed.protein)
+            val remC = Math.max(0, profile.dailyCarbsG - consumed.carbs)
+            val remF = Math.max(0, profile.dailyFatG - consumed.fat)
+
+            try {
+                var success: AgentState.Success? = null
+                var errorMsg: String? = null
+                repository.runAgent(text, profile, remCal, remP, remC, remF).collect { st ->
+                    when (st) {
+                        is AgentState.Success -> success = st
+                        is AgentState.Error -> errorMsg = st.message
+                        is AgentState.Thinking -> { /* thinking shown as filler instead */ }
+                    }
+                }
+
+                fillerJob?.cancel()
+
+                if (success != null) {
+                    val s = success!!
+                    val (finalResults, note) = applyConstraints(text, s.results)
+                    val spoken = buildVoiceAnswer(s.message, finalResults)
+
+                    _voiceAnswer.value = spoken
+                    _activeResults.value = finalResults
+                    val baseMessage = if (note != null) "$note\n\n${s.message}" else s.message
+                    _chatMessages.update {
+                        it + ChatMessage(
+                            sender = "AI",
+                            content = generateHtmlLikeResponse(baseMessage, finalResults),
+                            results = finalResults
+                        )
+                    }
+                    _voiceState.value = VoiceState.ANSWERED
+                    speech.speak(spoken)
+                } else {
+                    _voiceError.value = errorMsg ?: "Something went wrong during the search."
+                    _voiceState.value = VoiceState.ERROR
+                }
+            } catch (e: Exception) {
+                fillerJob?.cancel()
+                _voiceError.value = e.message ?: "Voice search failed."
+                _voiceState.value = VoiceState.ERROR
+            }
+        }
+    }
+
+    private fun buildBuddyContext(): BuddyContext {
+        val profile = userProfile.value
+        val consumed = getConsumedMacros()
+        val lastItem = orderHistory.value.firstOrNull()?.let { order ->
+            try {
+                val arr = JSONArray(order.itemsJson)
+                if (arr.length() > 0) arr.getString(0) else null
+            } catch (_: Exception) { null }
+        }
+        return BuddyContext(
+            name = profile?.name?.takeIf { it.isNotBlank() } ?: "there",
+            goal = profile?.goal ?: "Maintain",
+            consumedCalories = consumed.calories,
+            remainingCalories = Math.max(0, (profile?.dailyCalories ?: 2000) - consumed.calories),
+            lastOrderItem = lastItem,
+            loggedMealsToday = todayLogs.value.size
+        )
+    }
+
+    private fun buildVoiceAnswer(message: String, results: List<DishItem>): String {
+        val top = results.firstOrNull() ?: return "I couldn't find a meal matching that right now."
+        return "Found it — the ${top.name} fits well: ${top.proteinG} grams protein, " +
+                "${top.calories} calories, ₹${top.price.toInt()}. Want it in your cart?"
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        speech.shutdown()
     }
 
     fun dismissResult(dishId: String) {

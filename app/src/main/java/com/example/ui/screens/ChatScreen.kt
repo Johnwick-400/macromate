@@ -29,8 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +68,22 @@ fun ChatScreen(
     var infoDialogDish by remember { mutableStateOf<DishItem?>(null) }
     var showInfoDialog by remember { mutableStateOf(value = false) }
 
+    // Voice assistant ("Buddy") state + mic permission
+    var showVoice by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) { showVoice = true; viewModel.startVoiceListening() }
+    }
+    val launchBuddy = {
+        val granted = ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) { showVoice = true; viewModel.startVoiceListening() }
+        else micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+
     // Quick-prompts
     val quickPrompts = listOf(
         "Post-workout dinner",
@@ -79,6 +99,7 @@ fun ChatScreen(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -440,6 +461,26 @@ fun ChatScreen(
                     )
                 }
             }
+        }
+    }
+
+        // Floating "Buddy" voice button — sits above the input tray, bottom-end
+        if (!showVoice) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 96.dp)
+            ) {
+                BuddyFab(onClick = launchBuddy)
+            }
+        }
+
+        // Full-screen voice overlay
+        if (showVoice) {
+            VoiceAssistantOverlay(
+                viewModel = viewModel,
+                onClose = { showVoice = false; viewModel.dismissVoice() }
+            )
         }
     }
 
