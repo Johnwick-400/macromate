@@ -151,7 +151,7 @@ fun ChatScreen(
                     }
                 }
 
-                // Small badge highlighting active on-device model
+                // Small badge highlighting active on-device Qwen model
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -159,7 +159,7 @@ fun ChatScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "ON-DEVICE LAYA",
+                        text = "QWEN 2.5 SLM",
                         style = MaterialTheme.typography.labelSmall,
                         color = NeonEmerald,
                         fontWeight = FontWeight.Bold

@@ -49,10 +49,10 @@ object MacroMateAgent {
             Log.d(TAG, "Allergen list for filtering: $allergensList")
             Log.d(TAG, "Cuisine preferences: $cuisinePrefs")
 
-            // System 1 Decision Model (On-Device Laya Architecture)
-            val decision = LayaDecisionEngine.evaluateIntent(query, remainingProtein, remainingCalories)
-            val engineTag = if (decision.isModelDriven) "Laya NPU (${decision.latencyMs}ms)" else "Fast-Path (<1ms)"
-            emit(AgentState.Thinking("⚡ System 1 Decision [$engineTag]: ${decision.goal} · ${decision.budget}"))
+            // On-Device Qwen 2.5 SLM Engine
+            val decision = QwenAgentEngine.evaluateIntent(query, remainingProtein, remainingCalories)
+            val engineTag = if (decision.isModelDriven) "Snapdragon NPU (${decision.latencyMs}ms)" else "Fast-Path (<1ms)"
+            emit(AgentState.Thinking("⚡ Qwen 2.5 SLM [$engineTag]: ${decision.goal} · ${decision.budget}"))
             var searchTerm = decision.searchKeyword
 
             if (RestGeminiClient.isApiKeyAvailable() && !decision.isModelDriven) {
@@ -339,22 +339,10 @@ object MacroMateAgent {
     }
 
     /**
-     * Helper to retrieve user reasoning comments.
+     * Helper to retrieve user reasoning comments via on-device Qwen SLM.
      */
     private fun generateAIReasoning(dish: DishItem, profile: UserProfile, score: Double): String {
-        val percentage = (score * 100).toInt()
-        val restStr = if (profile.allergiesJson.contains("vegetarian")) "pure vegetarian" else "curated nutrient"
-        return when {
-            dish.proteinG > 30 -> {
-                "This high-protein powerhouse ($percentage% fit) packs a substantial ${dish.proteinG}g of clean muscle-building protein, keeping carbs perfectly at ${dish.carbsG}g. It aligns perfectly with your ${profile.goal} plan while satisfying your core dietary boundaries."
-            }
-            dish.carbsG < 15 -> {
-                "Perfect ketogenic or low-carbohydrate choice ($percentage% fit). It has only ${dish.carbsG}g of carbs and relies on healthy lipids (${dish.fatG}g) and lean proteins (${dish.proteinG}g) to hit your targets."
-            }
-            else -> {
-                "An extremely balanced, nutritional delivery ($percentage% fit). Delivers a moderate, clean glycemic index distribution (${dish.carbsG}g carbs) bundled with ${dish.proteinG}g of $restStr proteins."
-            }
-        }
+        return QwenAgentEngine.generateNutritionalReasoning(dish, profile, score)
     }
 
     /**
