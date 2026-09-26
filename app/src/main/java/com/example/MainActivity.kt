@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.NeonEmerald
@@ -176,15 +178,37 @@ fun MainWorkspaceScaffold(viewModel: MacroMateViewModel) {
                         selectedTextColor = OrangeSwiggy,
                         unselectedIconColor = TextHint,
                         unselectedTextColor = TextHint,
-                        indicatorColor = Color(0xFFFFE5D3) // Soft warm orange accent matching Swiggy styling
+                        indicatorColor = Color(0xFFFFE5D3)
                     ),
                     modifier = Modifier.testTag("cart_tab")
                 )
 
-                // Tab 4: User Profile settings
+                // Tab 4: Dietary Log / Schedule (Single-color Vector Drawable)
                 NavigationBarItem(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
+                    icon = {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_dietary_log),
+                            contentDescription = "Dietary Log",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    },
+                    label = { Text("Dietary Log", fontSize = 10.sp, fontWeight = FontWeight.SemiBold) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = NeonEmerald,
+                        selectedTextColor = NeonEmerald,
+                        unselectedIconColor = TextHint,
+                        unselectedTextColor = TextHint,
+                        indicatorColor = LightTeal
+                    ),
+                    modifier = Modifier.testTag("dietary_log_tab")
+                )
+
+                // Tab 5: User Profile settings
+                NavigationBarItem(
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
                     icon = {
                         Icon(
                             imageVector = Icons.Default.AccountCircle,
@@ -223,7 +247,14 @@ fun MainWorkspaceScaffold(viewModel: MacroMateViewModel) {
                     0 -> ChatScreen(viewModel = viewModel)
                     1 -> TrackerScreen(viewModel = viewModel)
                     2 -> CartScreen(viewModel = viewModel)
-                    3 -> ProfileScreen(viewModel = viewModel)
+                    3 -> DietaryLogScreen(
+                        viewModel = viewModel,
+                        onNavigateToChat = { query ->
+                            selectedTab = 0
+                            viewModel.sendMessage(query)
+                        }
+                    )
+                    4 -> ProfileScreen(viewModel = viewModel)
                 }
             }
         }

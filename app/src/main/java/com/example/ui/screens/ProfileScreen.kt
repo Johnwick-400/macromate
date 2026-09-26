@@ -404,6 +404,9 @@ fun ProfileScreen(
             // Section: on-device Qwen model status / download
             item { QwenModelCard(viewModel) }
 
+            // Section: Budget & Meal Timing Settings
+            item { BudgetAndScheduleSettingsCard(viewModel) }
+
             // Section 3: Past Orders with Breakdown
             item {
                 Text(
@@ -725,6 +728,105 @@ private fun CurrentLocationConfirmDialog(
             TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel", color = TextSecondary) }
         }
     )
+}
+
+@Composable
+fun BudgetAndScheduleSettingsCard(viewModel: MacroMateViewModel) {
+    val profile by viewModel.userProfile.collectAsState()
+    var budgetText by remember(profile?.monthlyBudgetInr) {
+        mutableStateOf(if ((profile?.monthlyBudgetInr ?: 0.0) > 0) "${profile?.monthlyBudgetInr?.toInt()}" else "")
+    }
+    var mealsCount by remember(profile?.mealsPerDay) {
+        mutableIntStateOf(profile?.mealsPerDay ?: 4)
+    }
+    var isEarlyCut by remember(profile?.isEarlyHeavyCut) {
+        mutableStateOf(profile?.isEarlyHeavyCut ?: false)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SlateCard),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "BUDGET & MEAL TIMING",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = NeonEmerald,
+                letterSpacing = 1.2.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedTextField(
+                value = budgetText,
+                onValueChange = { budgetText = it },
+                label = { Text("Monthly Food Budget Cap (₹)") },
+                placeholder = { Text("0 = Unrestricted") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text("Meals Per Day: $mealsCount", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(3, 4, 5, 6).forEach { count ->
+                    FilterChip(
+                        selected = mealsCount == count,
+                        onClick = { mealsCount = count },
+                        label = { Text("$count Meals") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = LightTeal,
+                            selectedLabelColor = NeonEmerald
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Front-load Cut Calories", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text("Bigger breakfast cuts evening cravings", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                }
+                Switch(
+                    checked = isEarlyCut,
+                    onCheckedChange = { isEarlyCut = it },
+                    colors = SwitchDefaults.colors(checkedThumbColor = NeonEmerald, checkedTrackColor = LightTeal)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    val budget = budgetText.toDoubleOrNull() ?: 0.0
+                    viewModel.updateBudgetAndScheduleSettings(
+                        monthlyBudgetInr = budget,
+                        mealsPerDay = mealsCount,
+                        wakeMinutes = profile?.wakeTimeMinutes ?: 420,
+                        sleepMinutes = profile?.sleepTimeMinutes ?: 1380,
+                        workoutMinutes = profile?.workoutTimeMinutes ?: 1080,
+                        isEarlyHeavyCut = isEarlyCut
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald)
+            ) {
+                Text("Save Budget & Schedule", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 
 // Order History Item UI view list components

@@ -1,11 +1,7 @@
 package com.example.data.repository
 
 import com.example.data.local.DatabaseDao
-import com.example.data.model.UserProfile
-import com.example.data.model.UserAccount
-import com.example.data.model.MacroLog
-import com.example.data.model.OrderHistory
-import com.example.data.model.DishItem
+import com.example.data.model.*
 import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,6 +69,28 @@ class MacroMateRepository(private val dao: DatabaseDao) {
     suspend fun clearOrderHistory(userId: String) {
         dao.clearOrderHistory(userId)
     }
+
+    // --- Snapshots, Weight & Outside Spend ---
+    fun getDailyTargetSnapshotFlow(userId: String, date: String): Flow<DailyTargetSnapshot?> =
+        dao.getDailyTargetSnapshotFlow(userId, date)
+
+    suspend fun saveDailyTargetSnapshot(snapshot: DailyTargetSnapshot) =
+        dao.insertDailyTargetSnapshot(snapshot)
+
+    fun getAllDailyTargetSnapshotsFlow(userId: String): Flow<List<DailyTargetSnapshot>> =
+        dao.getAllDailyTargetSnapshotsFlow(userId)
+
+    fun getWeightLogsFlow(userId: String): Flow<List<WeightLog>> =
+        dao.getWeightLogsFlow(userId)
+
+    suspend fun saveWeightLog(log: WeightLog) =
+        dao.insertWeightLog(log)
+
+    fun getOutsideSpendsFlow(userId: String): Flow<List<OutsideSpendLog>> =
+        dao.getOutsideSpendsFlow(userId)
+
+    suspend fun saveOutsideSpend(spend: OutsideSpendLog) =
+        dao.insertOutsideSpend(spend)
 
     /**
      * Delegates to the Intelligent ReAct Agent.

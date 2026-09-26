@@ -1,10 +1,7 @@
 package com.example.data.local
 
 import androidx.room.*
-import com.example.data.model.UserProfile
-import com.example.data.model.UserAccount
-import com.example.data.model.MacroLog
-import com.example.data.model.OrderHistory
+import com.example.data.model.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -61,4 +58,31 @@ interface DatabaseDao {
 
     @Query("DELETE FROM order_history WHERE userId = :userId")
     suspend fun clearOrderHistory(userId: String = "default_user")
+
+    // Daily Target Snapshot Queries
+    @Query("SELECT * FROM daily_target_snapshot WHERE userId = :userId AND date = :date LIMIT 1")
+    fun getDailyTargetSnapshotFlow(userId: String = "default_user", date: String): Flow<DailyTargetSnapshot?>
+
+    @Query("SELECT * FROM daily_target_snapshot WHERE userId = :userId AND date = :date LIMIT 1")
+    suspend fun getDailyTargetSnapshot(userId: String = "default_user", date: String): DailyTargetSnapshot?
+
+    @Query("SELECT * FROM daily_target_snapshot WHERE userId = :userId ORDER BY date DESC")
+    fun getAllDailyTargetSnapshotsFlow(userId: String = "default_user"): Flow<List<DailyTargetSnapshot>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDailyTargetSnapshot(snapshot: DailyTargetSnapshot)
+
+    // Weight Log Queries
+    @Query("SELECT * FROM weight_log WHERE userId = :userId ORDER BY date ASC")
+    fun getWeightLogsFlow(userId: String = "default_user"): Flow<List<WeightLog>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWeightLog(log: WeightLog)
+
+    // Outside Spend Queries
+    @Query("SELECT * FROM outside_spend_log WHERE userId = :userId ORDER BY date DESC")
+    fun getOutsideSpendsFlow(userId: String = "default_user"): Flow<List<OutsideSpendLog>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOutsideSpend(spend: OutsideSpendLog)
 }

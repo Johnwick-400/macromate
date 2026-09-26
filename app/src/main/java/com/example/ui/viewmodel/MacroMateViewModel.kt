@@ -9,6 +9,7 @@ import com.example.data.model.*
 import android.content.Intent
 import android.net.Uri
 import com.example.data.repository.AgentState
+import com.example.data.repository.*
 import com.example.data.repository.DeviceLocationClient
 import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.LayaDecisionEngine
@@ -292,6 +293,138 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // --- Outside Spends & Budget State ---
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val outsideSpends: StateFlow<List<OutsideSpendLog>> = _currentUserId
+        .flatMapLatest { userId ->
+            if (userId == null) flowOf(emptyList()) else repository.getOutsideSpendsFlow(userId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val budgetStatus: StateFlow<BudgetStatus> = combine(userProfile, orderHistory, outsideSpends) { profile, orders, spends ->
+        val budget = profile?.monthlyBudgetInr ?: 0.0
+        val monthlySpend = FoodBudgetCalculator.computeMonthlySpend(orders, spends)
+        FoodBudgetCalculator.evaluateBudget(budget, monthlySpend)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        BudgetStatus(0.0, 0.0, 0.0, 0, null, false, "Monthly budget not set")
+    )
+
+    // --- Dynamic Meal Schedule Plan State ---
+    val dailySchedulePlan: StateFlow<DailySchedulePlan> = userProfile.map { profile ->
+        if (profile == null) {
+            MealScheduleCalculator.buildSchedule(70.0, 2000, 130, 220, 65)
+        } else {
+            MealScheduleCalculator.buildSchedule(
+                weightKg = profile.weightKg,
+                dailyCalories = profile.dailyCalories,
+                dailyProteinG = profile.dailyProteinG,
+                dailyCarbsG = profile.dailyCarbsG,
+                dailyFatG = profile.dailyFatG,
+                mealsPerDay = profile.mealsPerDay,
+                wakeMinutes = profile.wakeTimeMinutes,
+                sleepMinutes = profile.sleepTimeMinutes,
+                workoutMinutes = profile.workoutTimeMinutes,
+                isEarlyHeavyCut = profile.isEarlyHeavyCut
+            )
+        }
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        MealScheduleCalculator.buildSchedule(70.0, 2000, 130, 220, 65)
+    )
+
+    // --- Weight Logs & Daily Snapshots ---
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val weightLogs: StateFlow<List<WeightLog>> = _currentUserId
+        .flatMapLatest { userId ->
+            if (userId == null) flowOf(emptyList()) else repository.getWeightLogsFlow(userId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val dailySnapshots: StateFlow<List<DailyTargetSnapshot>> = _currentUserId
+        .flatMapLatest { userId ->
+            if (userId == null) flowOf(emptyList()) else repository.getAllDailyTargetSnapshotsFlow(userId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun recordWeight(weightKg: Double) {
+        val uid = _currentUserId.value ?: return
+        viewModelScope.launch {
+            val dateStr = todayString()
+            repository.saveWeightLog(
+                WeightLog(
+                    userId = uid,
+                    date = dateStr,
+                    weightKg = weightKg,
+                    trendWeightKg = weightKg
+                )
+            )
+            userProfile.value?.let { current ->
+                repository.saveUserProfile(current.copy(weightKg = weightKg))
+            }
+        }
+    }
+
+    fun recordOutsideSpend(amountInr: Double, note: String) {
+        val uid = _currentUserId.value ?: return
+        viewModelScope.launch {
+            repository.saveOutsideSpend(
+                OutsideSpendLog(
+                    userId = uid,
+                    date = todayString(),
+                    amountInr = amountInr,
+                    note = note
+                )
+            )
+        }
+    }
+
+    fun recordDayStatus(date: String, status: String, estimatedCal: Int? = null, estimatedP: Int? = null) {
+        val uid = _currentUserId.value ?: return
+        viewModelScope.launch {
+            val profile = userProfile.value
+            repository.saveDailyTargetSnapshot(
+                DailyTargetSnapshot(
+                    date = date,
+                    userId = uid,
+                    targetCalories = profile?.dailyCalories ?: 2000,
+                    targetProteinG = profile?.dailyProteinG ?: 130,
+                    targetCarbsG = profile?.dailyCarbsG ?: 220,
+                    targetFatG = profile?.dailyFatG ?: 65,
+                    status = status,
+                    estimatedCalories = estimatedCal,
+                    estimatedProtein = estimatedP
+                )
+            )
+        }
+    }
+
+    fun updateBudgetAndScheduleSettings(
+        monthlyBudgetInr: Double,
+        mealsPerDay: Int,
+        wakeMinutes: Int,
+        sleepMinutes: Int,
+        workoutMinutes: Int,
+        isEarlyHeavyCut: Boolean
+    ) {
+        viewModelScope.launch {
+            userProfile.value?.let { current ->
+                val updated = current.copy(
+                    monthlyBudgetInr = monthlyBudgetInr,
+                    mealsPerDay = mealsPerDay,
+                    wakeTimeMinutes = wakeMinutes,
+                    sleepTimeMinutes = sleepMinutes,
+                    workoutTimeMinutes = workoutMinutes,
+                    isEarlyHeavyCut = isEarlyHeavyCut
+                )
+                repository.saveUserProfile(updated)
+            }
+        }
+    }
+
     // --- Chat & Agent UI State ---
     private val _chatMessages = MutableStateFlow<List<ChatMessage>>(
         listOf(
@@ -461,8 +594,8 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 calculateMacrosForGoal(weight, goal)
             }
 
-            val updatedProfile = UserProfile(
-                userId = userId,
+            val current = userProfile.value
+            val updatedProfile = (current ?: UserProfile(userId = userId)).copy(
                 name = name,
                 age = age,
                 weightKg = weight,
@@ -474,7 +607,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 dailyFatG = macros.fat,
                 allergiesJson = JSONArray(allergies).toString(),
                 cuisinePrefsJson = JSONArray(cuisinePrefs).toString(),
-                llmProvider = userProfile.value?.llmProvider ?: "Gemini"
+                llmProvider = current?.llmProvider ?: "Gemini"
             )
             repository.saveUserProfile(updatedProfile)
         }

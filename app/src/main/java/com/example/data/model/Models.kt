@@ -27,6 +27,46 @@ data class UserProfile(
     val allergiesJson: String = "[]", // vegetarian, vegan, gluten-free, nut allergy, dairy-free
     val cuisinePrefsJson: String = "[]", // north Indian, south Indian, continental, keto
     val llmProvider: String = "Gemini", // Gemini, Claude
+    val createdAt: Long = System.currentTimeMillis(),
+    val monthlyBudgetInr: Double = 0.0,
+    val mealsPerDay: Int = 4,
+    val wakeTimeMinutes: Int = 420,
+    val sleepTimeMinutes: Int = 1380,
+    val workoutTimeMinutes: Int = 1080,
+    val isEarlyHeavyCut: Boolean = false
+)
+
+@Entity(tableName = "daily_target_snapshot")
+data class DailyTargetSnapshot(
+    @PrimaryKey val date: String = "", // YYYY-MM-DD
+    val userId: String = "default_user",
+    val targetCalories: Int = 2000,
+    val targetProteinG: Int = 130,
+    val targetCarbsG: Int = 220,
+    val targetFatG: Int = 65,
+    val status: String = "", // FASTED, ESTIMATED, or empty
+    val estimatedCalories: Int? = null,
+    val estimatedProtein: Int? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "weight_log")
+data class WeightLog(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val userId: String = "default_user",
+    val date: String = "", // YYYY-MM-DD
+    val weightKg: Double = 70.0,
+    val trendWeightKg: Double = 70.0,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "outside_spend_log")
+data class OutsideSpendLog(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val userId: String = "default_user",
+    val date: String = "", // YYYY-MM-DD
+    val amountInr: Double = 0.0,
+    val note: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
 
