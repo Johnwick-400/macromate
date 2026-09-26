@@ -307,6 +307,17 @@ fun TrackerScreen(
                 }
             }
 
+            // Section 2b: Steps → calories burned, next to calories consumed
+            item {
+                ActivityCard(
+                    viewModel = viewModel,
+                    consumedKcal = consumed.calories,
+                    limitKcal = limitCals,
+                    weightKg = profile?.weightKg ?: 70.0,
+                    heightCm = profile?.heightCm ?: 175.0
+                )
+            }
+
             // Section 3: 7-Day History Custom Chart
             item {
                 val chartPoints = remember(allLogs) { viewModel.get7DayHistory() }
