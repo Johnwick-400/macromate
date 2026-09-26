@@ -326,7 +326,7 @@ fun ChatScreen(
                             .size(32.dp)
                             .clip(CircleShape)
                             .background(SlateDark)
-                            .tactilePress { viewModel.sendMessage("Search completed, closing cards.") },
+                            .tactilePress { viewModel.clearResults() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -384,8 +384,7 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .imePadding(),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {

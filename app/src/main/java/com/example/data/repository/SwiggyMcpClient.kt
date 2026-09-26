@@ -6,6 +6,7 @@ import android.util.Base64
 import android.util.Log
 import com.example.data.model.DishItem
 import com.example.data.model.Restaurant
+import com.example.data.model.SwiggyAddress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -36,6 +37,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * No refresh tokens in Swiggy v1.0 — when the access token expires (~5 days),
  * the user must reconnect from the Profile screen.
  */
+data class SwiggyAddressPage(val addresses: List<SwiggyAddress>, val hasMore: Boolean)
+
 object SwiggyMcpClient {
     private const val TAG = "SwiggyMcpClient"
 
@@ -74,8 +77,22 @@ object SwiggyMcpClient {
                 System.currentTimeMillis() < prefs.getLong("expires_at", 0L)
     }
 
+    /** Human-readable label for whichever saved address is currently active, e.g. "Home — 12 MG Road...". */
+    fun getActiveAddressDisplay(): String? = prefs.getString("address_display", null)
+
+    /** Switches which saved Swiggy address subsequent search/menu calls resolve against. */
+    fun setActiveAddress(address: SwiggyAddress) {
+        prefs.edit()
+            .putString("address_id", address.id)
+            .putString("address_display", displayFor(address))
+            .apply()
+    }
+
+    private fun displayFor(address: SwiggyAddress): String =
+        if (address.line.isNotBlank()) "${address.label} — ${address.line}" else address.label
+
     fun disconnect() {
-        prefs.edit().remove("access_token").remove("expires_at").remove("address_id").apply()
+        prefs.edit().remove("access_token").remove("expires_at").remove("address_id").remove("address_display").apply()
         mcpSessionId = null
     }
 
@@ -112,10 +129,11 @@ object SwiggyMcpClient {
             exchangeToken(clientId, code, verifier)
 
             // A usable connection needs a delivery address for every Food tool call.
+            // Default to the first saved address; the user can switch via the address picker in Profile.
             mcpSessionId = null
-            val addr = fetchFirstAddressId()
+            val first = fetchAddresses(page = 1).addresses.firstOrNull()
                 ?: throw IllegalStateException("No saved addresses on this Swiggy account. Add one in the Swiggy app, then reconnect.")
-            prefs.edit().putString("address_id", addr).apply()
+            setActiveAddress(first)
         }.onFailure { Log.e(TAG, "Swiggy connect failed", it) }
     }
 
@@ -305,17 +323,51 @@ object SwiggyMcpClient {
     // High-level Food tools mapped to MacroMate models
     // ---------------------------------------------------------------
 
-    private fun fetchFirstAddressId(): String? {
-        val data = callTool("get_addresses", JSONObject())
-        val arr = findObjectArray(data) ?: return null
-        val first = arr.optJSONObject(0) ?: return null
-        // Field name is not pinned in docs — take the first id-ish string.
-        for (key in listOf("addressId", "id", "address_id")) {
-            first.optString(key).takeIf { it.isNotBlank() }?.let { return it }
+    /** Saved addresses, most-recently-ordered-from first (Swiggy's own sort order). */
+    suspend fun fetchAddresses(page: Int = 1, pageSize: Int = 10): SwiggyAddressPage = withContext(Dispatchers.IO) {
+        val data = callTool("get_addresses", JSONObject().put("page", page).put("pageSize", pageSize))
+        val arr = findObjectArray(data, preferKeyContaining = "address") ?: JSONArray()
+        val addresses = (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val id = firstString(o, "id", "addressId") ?: return@mapNotNull null
+            SwiggyAddress(
+                id = id,
+                label = firstString(o, "addressTag", "addressCategory")?.takeIf(String::isNotBlank) ?: "Saved address",
+                line = firstString(o, "addressLine").orEmpty()
+            )
         }
-        return first.keys().asSequence()
-            .firstOrNull { it.lowercase(Locale.ROOT).contains("id") }
-            ?.let { first.optString(it).takeIf(String::isNotBlank) }
+        val hasMore = data.optJSONObject("pagination")?.optBoolean("hasMore", false) ?: false
+        SwiggyAddressPage(addresses, hasMore)
+    }
+
+    /**
+     * Pushes items into the user's real Swiggy cart (single restaurant per call — Swiggy
+     * carts, like every food-delivery cart, hold one restaurant at a time). Returns the
+     * "to pay" total when Swiggy's response includes one, so the caller can show it.
+     */
+    suspend fun updateCart(restaurantId: String, restaurantName: String, items: List<Pair<String, Int>>): Double? =
+        withContext(Dispatchers.IO) {
+            val cartItems = JSONArray()
+            items.forEach { (itemId, quantity) ->
+                cartItems.put(JSONObject().put("itemId", itemId).put("quantity", quantity))
+            }
+            val data = callTool(
+                "update_food_cart",
+                JSONObject()
+                    .put("restaurantId", restaurantId)
+                    .put("restaurantName", restaurantName)
+                    .put("cartItems", cartItems)
+                    .put("addressId", addressId ?: throw IllegalStateException("Not connected to Swiggy"))
+            )
+            extractToPay(data)
+        }
+
+    private fun extractToPay(data: JSONObject): Double? {
+        data.optDouble("to_pay").takeIf { !it.isNaN() }?.let { return it }
+        for (key in listOf("pricingSummary", "pricing")) {
+            data.optJSONObject(key)?.optDouble("to_pay")?.takeIf { !it.isNaN() }?.let { return it }
+        }
+        return null
     }
 
     suspend fun searchRestaurants(query: String): List<Restaurant> = withContext(Dispatchers.IO) {

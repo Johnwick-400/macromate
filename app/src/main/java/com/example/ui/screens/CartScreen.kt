@@ -222,18 +222,24 @@ fun CartScreen(
                     ) {
                         Button(
                             onClick = {
-                                viewModel.confirmCartAndPlaceOrder()
+                                viewModel.confirmCartAndPlaceOrder { syncedToSwiggy ->
+                                    Toast.makeText(
+                                        context,
+                                        if (syncedToSwiggy) "Items added to your Swiggy cart — opening Swiggy..."
+                                        else "Opening Swiggy (connect your account in Profile to sync items directly)",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
 
-                                Toast.makeText(context, "Redirecting to Swiggy client...", Toast.LENGTH_SHORT).show()
-
-                                // Real Android deep-link redirect
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, "swiggy://cart".toUri())
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {
-                                    // Fallback to Swiggy website
-                                    val intent = Intent(Intent.ACTION_VIEW, "https://www.swiggy.com/".toUri())
-                                    context.startActivity(intent)
+                                    // Real Android deep-link redirect — lands on the cart view
+                                    // now that the items actually exist in it (when synced).
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, "swiggy://cart".toUri())
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {
+                                        // Fallback to Swiggy website
+                                        val intent = Intent(Intent.ACTION_VIEW, "https://www.swiggy.com/".toUri())
+                                        context.startActivity(intent)
+                                    }
                                 }
                             },
                             modifier = Modifier
