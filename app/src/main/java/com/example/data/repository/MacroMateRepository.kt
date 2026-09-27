@@ -70,27 +70,27 @@ class MacroMateRepository(private val dao: DatabaseDao) {
         dao.clearOrderHistory(userId)
     }
 
-    // --- Snapshots, Weight & Outside Spend ---
-    fun getDailyTargetSnapshotFlow(userId: String, date: String): Flow<DailyTargetSnapshot?> =
-        dao.getDailyTargetSnapshotFlow(userId, date)
+    // --- Dietary Log / Budget (schema v4) ---
+    suspend fun updateMealSlot(logId: Int, mealSlot: String?) = dao.updateMealSlot(logId, mealSlot)
+    fun getMacroLogsBetween(userId: String, from: String, to: String) = dao.getMacroLogsBetweenFlow(userId, from, to)
+    fun getDayRecordsBetween(userId: String, from: String, to: String) = dao.getDayRecordsBetweenFlow(userId, from, to)
+    suspend fun getDayRecord(userId: String, date: String) = dao.getDayRecord(userId, date)
+    suspend fun snapshotDayIfAbsent(record: DayRecord) = dao.insertDayRecordIfAbsent(record)
+    suspend fun saveDayRecord(record: DayRecord) = dao.upsertDayRecord(record)
 
-    suspend fun saveDailyTargetSnapshot(snapshot: DailyTargetSnapshot) =
-        dao.insertDailyTargetSnapshot(snapshot)
+    fun getWeightLogsFlow(userId: String): Flow<List<WeightLog>> = dao.getWeightLogsFlow(userId)
+    suspend fun saveWeightForDay(log: WeightLog) = dao.upsertWeightForDay(log)
 
-    fun getAllDailyTargetSnapshotsFlow(userId: String): Flow<List<DailyTargetSnapshot>> =
-        dao.getAllDailyTargetSnapshotsFlow(userId)
+    fun getOutsideSpendsFlow(userId: String): Flow<List<OutsideSpendLog>> = dao.getOutsideSpendsFlow(userId)
+    fun getOutsideSpendsBetween(userId: String, from: String, to: String) = dao.getOutsideSpendsBetweenFlow(userId, from, to)
+    suspend fun saveOutsideSpend(spend: OutsideSpendLog) = dao.insertOutsideSpend(spend)
+    suspend fun deleteOutsideSpend(id: Int) = dao.deleteOutsideSpend(id)
 
-    fun getWeightLogsFlow(userId: String): Flow<List<WeightLog>> =
-        dao.getWeightLogsFlow(userId)
-
-    suspend fun saveWeightLog(log: WeightLog) =
-        dao.insertWeightLog(log)
-
-    fun getOutsideSpendsFlow(userId: String): Flow<List<OutsideSpendLog>> =
-        dao.getOutsideSpendsFlow(userId)
-
-    suspend fun saveOutsideSpend(spend: OutsideSpendLog) =
-        dao.insertOutsideSpend(spend)
+    suspend fun clearDietaryData(userId: String) {
+        dao.clearDayRecords(userId)
+        dao.clearOutsideSpends(userId)
+        dao.clearWeightLogs(userId)
+    }
 
     /**
      * Delegates to the Intelligent ReAct Agent.
@@ -101,7 +101,8 @@ class MacroMateRepository(private val dao: DatabaseDao) {
         remainingCalories: Int,
         remainingProtein: Int,
         remainingCarbs: Int,
-        remainingFat: Int
+        remainingFat: Int,
+        budget: MealBudget = MealBudget.NONE
     ): Flow<AgentState> {
         return MacroMateAgent.searchAndRankMeals(
             query,
@@ -109,7 +110,8 @@ class MacroMateRepository(private val dao: DatabaseDao) {
             remainingCalories,
             remainingProtein,
             remainingCarbs,
-            remainingFat
+            remainingFat,
+            budget
         )
     }
 }

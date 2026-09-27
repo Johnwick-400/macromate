@@ -38,6 +38,7 @@ fun AuthScreen(
 
     // Form fields
     var name by remember { mutableStateOf("") }
+    var sex by remember { mutableStateOf("") } // "Male" | "Female", sign-up only
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -245,6 +246,34 @@ fun AuthScreen(
                                     unfocusedContainerColor = InputBg.copy(alpha = 0.5f)
                                 )
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Gender", fontSize = 12.sp, color = TextSecondary)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                listOf("Male", "Female").forEach { option ->
+                                    val selected = sex == option
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (selected) NeonEmerald else InputBg.copy(alpha = 0.5f))
+                                            .border(1.dp, if (selected) NeonEmerald else SlateBorder, RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                sex = option
+                                                localError = null
+                                            }
+                                            .testTag("signup_sex_$option")
+                                    ) {
+                                        Text(
+                                            option,
+                                            color = if (selected) Color.White else TextPrimary,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                     }
@@ -388,7 +417,11 @@ fun AuthScreen(
                                     localError = "Passwords do not match."
                                     return@Button
                                 }
-                                viewModel.signUp(name, email, password) { success ->
+                                if (sex.isBlank()) {
+                                    localError = "Please select your gender."
+                                    return@Button
+                                }
+                                viewModel.signUp(name, email, password, sex) { success ->
                                     if (success) {
                                         onAuthSuccess()
                                     }

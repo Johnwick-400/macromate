@@ -62,15 +62,18 @@ Room DB        MacroMateAgent + API clients
 
 **`MacroMateViewModel`** (`ui/viewmodel/MacroMateViewModel.kt`) — Single ViewModel driving all screens. Handles auth, profile (with automatic macro calculation), cart, chat messages, and AI engine selection (Gemini vs Claude).
 
-**Room DB** (`data/local/`) — Version 2 with destructive migration fallback. Entities: `UserAccount`, `UserProfile`, `MacroLog`, `OrderHistory`.
+**Room DB** (`data/local/`) — Version 4 with real migrations (`MIGRATION_2_3`, `MIGRATION_3_4`); only v1 may be wiped. Schemas are exported to `app/schemas/` and verified by `DatabaseMigrationTest`. Entities: `UserAccount`, `UserProfile`, `MacroLog`, `OrderHistory`, `DayRecord` (per-user daily target snapshot + what the user said about the day), `WeightLog`, `OutsideSpendLog` (outside orders, Swiggy fees, month reconcile). Never add a column without a migration.
 
-### Screens (6 total)
+**Dietary Log & Monthly Budget** — rules live in pure Kotlin under `domain/` (no Android imports, fully unit-tested): `schedule/MealScheduleEngine` (meal slots, protein spread, workout/pre-sleep timing), `analytics/DayAnalytics` (a day with no logs is *unknown*, never 0 kcal; coverage vs adherence; capped weekly carry-over), `analytics/SafetyRules`, `analytics/WeightTrend`, `budget/BudgetEngine` (safe daily allowance, spend derived from stored rows). `DietaryLogViewModel` wires Room flows into them; `MacroMateViewModel` only passes the daily allowance to the agent (`setMealBudget`) — with no budget set, agent pricing is unchanged. Offline meal reminders: `notify/MealReminders` (AlarmManager + notification).
+
+### Screens (7 total)
 - `AuthScreen` — login/signup
 - `OnboardingScreen` — 4-step wizard collecting bio, goals, allergies, cuisines
 - `ChatScreen` — ReAct agent chat; displays thinking steps
 - `TrackerScreen` — Canvas progress arcs + 7-day macro history chart
 - `CartScreen` — Quantity controls, macro totals, Swiggy deep-link
-- `ProfileScreen` — Live profile editing, AI engine selector
+- `DietaryLogScreen` — Meal schedule for the day, missed-day prompt, water/food groups, analytics, budget, weight
+- `ProfileScreen` — Live profile editing, monthly food budget, AI engine selector
 
 ## Module Structure
 

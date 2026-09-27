@@ -1,450 +1,279 @@
 package com.example.ui.screens
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.R
-import com.example.data.repository.BudgetStatus
-import com.example.data.repository.ScheduledMealSlot
-import com.example.ui.theme.*
+import com.example.data.model.DayStatus
+import com.example.domain.analytics.WeightTrend
+import com.example.domain.schedule.MealSlot
+import com.example.ui.theme.SlateDark
+import com.example.ui.viewmodel.DietaryLogViewModel
 import com.example.ui.viewmodel.MacroMateViewModel
+import java.time.LocalDate
+import kotlin.math.roundToInt
 
+/**
+ * Dietary Log tab: the day's meal timeline, quick "what happened?" answers for missed days,
+ * water and food-group checklists, week/month analytics, budget and weight trend.
+ * [onFindOnSwiggy] sends a prefilled query to the Assistant tab and switches to it.
+ */
 @Composable
 fun DietaryLogScreen(
     viewModel: MacroMateViewModel,
-    onNavigateToChat: (prefilledQuery: String) -> Unit = {}
+    dietVm: DietaryLogViewModel,
+    onFindOnSwiggy: (query: String, slot: com.example.data.model.MealSlotContext) -> Unit
 ) {
-    val schedulePlan by viewModel.dailySchedulePlan.collectAsState()
-    val budgetStatus by viewModel.budgetStatus.collectAsState()
-    val userProfile by viewModel.userProfile.collectAsState()
-    val todayLogs by viewModel.todayLogs.collectAsState()
+    val profile by dietVm.profile.collectAsState()
+    val today by dietVm.today.collectAsState()
+    val selectedDate by dietVm.selectedDate.collectAsState()
+    val dayPlan by dietVm.dayPlan.collectAsState()
+    val weekSummary by dietVm.weekSummary.collectAsState()
+    val monthSummary by dietVm.monthSummary.collectAsState()
+    val daysNeedingAnswer by dietVm.daysNeedingAnswer.collectAsState()
+    val classifiedDays by dietVm.classifiedDays.collectAsState()
+    val budgetStatus by dietVm.budgetStatus.collectAsState()
+    val weightTrend by dietVm.weightTrend.collectAsState()
+    val carryOverKcal by dietVm.todayCarryOverKcal.collectAsState()
+    val userId by viewModel.currentUserId.collectAsState()
+    val safetyReasons by dietVm.safetyReasons.collectAsState()
+    val selectedDayLogs by dietVm.selectedDayLogs.collectAsState()
+    val visibleMonth by dietVm.visibleMonth.collectAsState()
+    val trackingStart by dietVm.trackingStart.collectAsState()
+    val visibleMonthSummary by dietVm.visibleMonthSummary.collectAsState()
+    val weekActivity by dietVm.weekActivity.collectAsState()
+    val monthActivity by dietVm.monthActivity.collectAsState()
+    val selectedDayWater by dietVm.selectedDayWater.collectAsState()
+    var showCalendar by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+    var showReconcile by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Android 13+: reminders need the notification permission; ask once when they're switched on.
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { /* the reminder scheduler re-checks the permission on its own */ }
 
-    var showOutsideSpendDialog by remember { mutableStateOf(false) }
-    var outsideAmountText by remember { mutableStateOf("") }
-    var outsideNoteText by remember { mutableStateOf("") }
+    var showSettings by remember { mutableStateOf(false) }
+    var loggingSlot by remember { mutableStateOf<MealSlot?>(null) }
+    var spendDate by remember { mutableStateOf<LocalDate?>(null) }
 
-    var showWeightDialog by remember { mutableStateOf(false) }
-    var weightInputText by remember { mutableStateOf("") }
+    val isToday = selectedDate == today
+    val plan = dayPlan
+    val slots = plan?.slots.orEmpty()
+    val targetKcal = slots.sumOf { it.targetKcal }.takeIf { it > 0 } ?: profile?.dailyCalories ?: 2000
+    val targetProtein = slots.sumOf { it.targetProteinG }.takeIf { it > 0 } ?: profile?.dailyProteinG ?: 0
+    val eatenKcal = slots.sumOf { it.loggedKcal }
+    val eatenProtein = slots.sumOf { it.loggedProteinG }
+    val dayKinds = remember(classifiedDays) { classifiedDays.associate { it.date to it.kind } }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(SlateDark)
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // --- 1. Screen Header with Full-Color Icon ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_dietary_log_full),
-                        contentDescription = "Dietary Schedule Icon",
-                        modifier = Modifier.size(52.dp)
+        DietaryLogHeader(
+            subtitle = profile?.let {
+                "${it.goal} · ${fmtInt(it.dailyCalories)} kcal · ${it.dailyProteinG} g protein"
+            } ?: "Set up your profile to see a plan",
+            calendarOpen = showCalendar,
+            onToggleCalendar = { showCalendar = !showCalendar },
+            onOpenSettings = { showSettings = true }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item(key = "week") {
+                if (showCalendar) {
+                    DietaryLogMonthCalendar(
+                        month = visibleMonth,
+                        today = today,
+                        trackingStart = trackingStart,
+                        selectedDate = selectedDate,
+                        kinds = dayKinds,
+                        summary = visibleMonthSummary,
+                        onSelect = dietVm::selectDate,
+                        onMonthChange = dietVm::showMonth
                     )
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Dietary Schedule & Log",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = schedulePlan.goalGuideline,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            lineHeight = 16.sp
-                        )
-                    }
+                } else {
+                    DietaryLogWeekStrip(
+                        selectedDate = selectedDate,
+                        today = today,
+                        kinds = dayKinds,
+                        onSelect = dietVm::selectDate
+                    )
                 }
             }
-        }
 
-        // --- 2. Monthly Food Budget & Daily Allowance Card ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.AccountBalanceWallet,
-                                contentDescription = null,
-                                tint = NeonEmerald,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Monthly Food Budget",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { showOutsideSpendDialog = true },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddCircleOutline,
-                                contentDescription = "Add outside spend",
-                                tint = NeonEmerald
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (budgetStatus.monthlyBudgetInr <= 0.0) {
-                        Text(
-                            text = "No monthly budget cap set. You can set a budget under Profile to track spending and receive safe daily allowances.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-                    } else {
-                        val progress = if (budgetStatus.monthlyBudgetInr > 0) {
-                            (budgetStatus.currentMonthSpendInr / budgetStatus.monthlyBudgetInr).toFloat().coerceIn(0f, 1f)
-                        } else 0f
-
-                        val barColor = when {
-                            budgetStatus.isBudgetExhausted -> SoftRed
-                            progress > 0.8f -> OrangeSwiggy
-                            else -> NeonEmerald
-                        }
-
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)),
-                            color = barColor,
-                            trackColor = SlateDark
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Spent: ₹${budgetStatus.currentMonthSpendInr.toInt()} / ₹${budgetStatus.monthlyBudgetInr.toInt()}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
-                            )
-                            Text(
-                                text = "Remaining: ₹${budgetStatus.remainingBudgetInr.toInt()}",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (budgetStatus.isBudgetExhausted) SoftRed else NeonEmerald
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = if (budgetStatus.isBudgetExhausted) {
-                                "⚠️ Budget used up for this month."
-                            } else {
-                                "Safe allowance: ₹${budgetStatus.safeDailyAllowanceInr?.toInt() ?: 0} / day (${budgetStatus.daysRemainingInMonth} days left)"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = if (budgetStatus.isBudgetExhausted) SoftRed else TextSecondary
-                        )
-                    }
+            if (safetyReasons.isNotEmpty()) {
+                item(key = "safety") {
+                    DietaryLogGuidance(
+                        warnings = listOf(
+                            "Because of ${safetyReasons.joinToString(", ")}, MacroMate won't carry calories " +
+                                "across days or suggest fasting. Please plan fasts and calorie cuts with your doctor."
+                        ),
+                        tips = emptyList()
+                    )
                 }
             }
-        }
 
-        // --- 3. Body Weight Quick Check-In ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Body Weight Check-in",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "Current: ${userProfile?.weightKg ?: 70.0} kg",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            weightInputText = "${userProfile?.weightKg ?: 70.0}"
-                            showWeightDialog = true
+            if (isToday && daysNeedingAnswer.isNotEmpty()) {
+                item(key = "what_happened") {
+                    DietaryLogWhatHappenedCard(
+                        days = daysNeedingAnswer,
+                        onEstimate = { date, level -> dietVm.resolveDay(date, DayStatus.ESTIMATED, level) },
+                        onFasted = { date -> dietVm.resolveDay(date, DayStatus.FASTED) },
+                        onSkip = { date -> dietVm.resolveDay(date, DayStatus.SKIPPED) }
+                    )
+                }
+            }
+
+            item(key = "summary") {
+                DietaryLogDaySummary(
+                    date = selectedDate,
+                    isToday = isToday,
+                    eatenKcal = eatenKcal,
+                    targetKcal = targetKcal,
+                    eatenProtein = eatenProtein,
+                    targetProtein = targetProtein,
+                    carryOverKcal = if (isToday) carryOverKcal else 0
+                )
+            }
+
+            item(key = "timeline_title") {
+                DietaryLogSectionTitle(
+                    title = if (isToday) "Today's meals" else "Meals on ${fmtDayShort(selectedDate)}",
+                    trailing = if (slots.isNotEmpty()) "${slots.count { it.loggedKcal > 0 }} of ${slots.size} logged" else null
+                )
+            }
+            item(key = "timeline") {
+                if (plan == null) {
+                    DietaryLogEmptyNote("Finish your profile (weight and goal) to get a meal plan for the day.")
+                } else {
+                    DietaryLogMealTimeline(
+                        slots = slots,
+                        isToday = isToday,
+                        onFindOnSwiggy = { slot ->
+                            val allowance = budgetStatus?.dailyAllowance?.roundToInt()
+                            val vegetarian = profile?.allergiesJson.orEmpty().lowercase().let {
+                                "vegetarian" in it || "vegan" in it
+                            }
+                            onFindOnSwiggy(
+                                com.example.domain.schedule.SlotSearch.query(slot, vegetarian, selectedDate, allowance),
+                                com.example.data.model.MealSlotContext(slot.type.name, slot.type.label)
+                            )
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = SlateDark),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text("Log Weight", color = NeonEmerald, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
+                        onLog = { slot -> loggingSlot = slot },
+                        logsById = selectedDayLogs.associateBy { it.id },
+                        onMoveLog = { id, type -> dietVm.moveLog(id, type) }
+                    )
                 }
             }
-        }
 
-        // --- 4. Scheduled Meal Cadence Header ---
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Today's Meal Cadence (${schedulePlan.slots.size} Meals)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
-                Text(
-                    text = "${schedulePlan.totalCalories} kcal · ${schedulePlan.totalProteinG}g P",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = NeonEmerald
+            if (plan != null && (plan.warnings.isNotEmpty() || plan.tips.isNotEmpty())) {
+                item(key = "guidance") {
+                    DietaryLogGuidance(warnings = plan.warnings, tips = plan.tips)
+                }
+            }
+
+            item(key = "water") {
+                DietaryLogWaterCounter(glasses = selectedDayWater, onChange = { dietVm.setWater(selectedDate, it) })
+            }
+
+            item(key = "analytics") {
+                DietaryLogAnalyticsCard(
+                    week = weekSummary,
+                    month = monthSummary,
+                    weekActivity = weekActivity,
+                    monthActivity = monthActivity
                 )
             }
-        }
 
-        // --- 5. Scheduled Meal Slots ---
-        items(schedulePlan.slots) { slot ->
-            ScheduledMealCard(
-                slot = slot,
-                onOrderSwiggy = {
-                    val prompt = when {
-                        slot.isPostWorkout -> "Find a high protein post-workout recovery meal under 250 rs"
-                        slot.isBedtimeSlowProtein -> "Find a slow protein paneer or curd meal for bedtime"
-                        else -> "Find a balanced meal for ${slot.name} with ${slot.targetProteinG}g protein"
-                    }
-                    onNavigateToChat(prompt)
+            budgetStatus?.let { status ->
+                item(key = "budget") {
+                    DietaryLogBudgetRow(
+                        status = status,
+                        onAddAmount = { date -> spendDate = date },
+                        onNoSpend = { date -> dietVm.confirmNoSpend(date) },
+                        onReconcile = { showReconcile = true }
+                    )
                 }
-            )
+            }
+
+            item(key = "weight") {
+                DietaryLogWeightCard(
+                    points = weightTrend,
+                    weeklyRateKg = remember(weightTrend) { WeightTrend.weeklyRateKg(weightTrend) },
+                    onLogWeight = { kg -> dietVm.logWeight(kg) }
+                )
+            }
+
+            item(key = "disclaimer") {
+                DietaryLogDisclaimer()
+            }
         }
     }
 
-    // --- Outside Spend Dialog ---
-    if (showOutsideSpendDialog) {
-        AlertDialog(
-            onDismissRequest = { showOutsideSpendDialog = false },
-            title = { Text("Log Outside Food Spend") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Record food purchases made outside Swiggy (street stalls, grocery, dining out):", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        value = outsideAmountText,
-                        onValueChange = { outsideAmountText = it },
-                        label = { Text("Amount (₹)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = outsideNoteText,
-                        onValueChange = { outsideNoteText = it },
-                        label = { Text("Note (e.g. Juice stall)") },
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amt = outsideAmountText.toDoubleOrNull() ?: 0.0
-                        if (amt > 0) {
-                            viewModel.recordOutsideSpend(amt, outsideNoteText)
-                        }
-                        showOutsideSpendDialog = false
-                        outsideAmountText = ""
-                        outsideNoteText = ""
-                    }
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showOutsideSpendDialog = false }) { Text("Cancel") }
+    loggingSlot?.let { slot ->
+        DietaryLogMealDialog(
+            viewModel = viewModel,
+            slot = slot,
+            onDismiss = { loggingSlot = null }
+        )
+    }
+
+    spendDate?.let { date ->
+        DietaryLogOutsideSpendDialog(
+            date = date,
+            onDismiss = { spendDate = null },
+            onSave = { amount, note ->
+                dietVm.addOutsideSpend(date, amount, note)
+                spendDate = null
             }
         )
     }
 
-    // --- Weight Log Dialog ---
-    if (showWeightDialog) {
-        AlertDialog(
-            onDismissRequest = { showWeightDialog = false },
-            title = { Text("Log Body Weight") },
-            text = {
-                OutlinedTextField(
-                    value = weightInputText,
-                    onValueChange = { weightInputText = it },
-                    label = { Text("Weight (kg)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val w = weightInputText.toDoubleOrNull() ?: 70.0
-                        viewModel.recordWeight(w)
-                        showWeightDialog = false
-                    }
-                ) { Text("Update") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showWeightDialog = false }) { Text("Cancel") }
+    val settingsProfile = profile
+    if (showSettings && settingsProfile != null) {
+        DietaryLogScheduleSheet(
+            profile = settingsProfile,
+            onDismiss = { showSettings = false },
+            onSave = { meals, wake, sleep, workout, template, dayEnds, reminders, pregnant, diabetes, ed ->
+                dietVm.updateSchedulePrefs(meals, wake, sleep, workout, template, dayEnds, reminders)
+                dietVm.updateHealthChecks(pregnant, diabetes, ed)
+                if (reminders && android.os.Build.VERSION.SDK_INT >= 33 &&
+                    !com.example.notify.MealReminders.canPostNotifications(context)
+                ) {
+                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+                showSettings = false
             }
         )
     }
-}
 
-@Composable
-fun ScheduledMealCard(
-    slot: ScheduledMealSlot,
-    onOrderSwiggy: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SlateCard),
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(if (slot.isPostWorkout) OrangeSwiggy else NeonEmerald)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = slot.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "• ${slot.timeFormatted}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary
-                    )
-                }
-
-                if (slot.isPostWorkout) {
-                    Badge(containerColor = OrangeSwiggy.copy(alpha = 0.2f)) {
-                        Text("POST-WORKOUT", color = OrangeSwiggy, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                    }
-                } else if (slot.isBedtimeSlowProtein) {
-                    Badge(containerColor = NeonEmerald.copy(alpha = 0.2f)) {
-                        Text("BEDTIME CASEIN", color = NeonEmerald, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                    }
-                }
+    val reconcileStatus = budgetStatus
+    if (showReconcile && reconcileStatus != null) {
+        DietaryLogReconcileDialog(
+            knownSpend = reconcileStatus.spent,
+            onDismiss = { showReconcile = false },
+            onSave = { actual ->
+                dietVm.reconcileMonth(actual)
+                showReconcile = false
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Macro targets pill
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(SlateDark)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("🔥 ${slot.targetCalories} kcal", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
-                Text("🥩 ${slot.targetProteinG}g Protein", style = MaterialTheme.typography.bodySmall, color = NeonEmerald, fontWeight = FontWeight.SemiBold)
-                Text("🍚 ${slot.targetCarbsG}g C", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-                Text("🥑 ${slot.targetFatG}g F", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = slot.suggestedFoodTypes,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-                lineHeight = 16.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Button(
-                onClick = onOrderSwiggy,
-                modifier = Modifier.fillMaxWidth().height(36.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = OrangeSwiggy.copy(alpha = 0.15f)),
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = PaddingValues(0.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.DeliveryDining,
-                    contentDescription = null,
-                    tint = OrangeSwiggy,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Find fitting Swiggy meal",
-                    color = OrangeSwiggy,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+        )
     }
 }

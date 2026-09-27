@@ -40,7 +40,8 @@ object MacroMateAgent {
         remainingCalories: Int,
         remainingProtein: Int,
         remainingCarbs: Int,
-        remainingFat: Int
+        remainingFat: Int,
+        budget: MealBudget = MealBudget.NONE
     ): Flow<AgentState> = flow {
         try {
             // Own short step so the source isn't ellipsized away on narrow screens
@@ -60,6 +61,8 @@ object MacroMateAgent {
             val searchTerm = decision.searchKeyword
             val forceVeg = decision.isVegetarianForced
             val foodTerm = decision.requestedFood
+            val priceGuide = resolvePriceGuide(query, budget)
+            priceGuide.thinkingNote?.let { emit(AgentState.Thinking(it)) }
             val stats = SearchStats()
             if (foodTerm != null) emit(AgentState.Thinking("🔎 You asked for \"$foodTerm\" — searching for that first."))
 
@@ -75,7 +78,8 @@ object MacroMateAgent {
             var matchingDishes = runSearchPass(
                 searchTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
                 allergensList, cuisinePrefs, decision.budget, forceVeg,
-                strict = foodTerm != null, foodTerm = foodTerm, stats = stats
+                strict = foodTerm != null, foodTerm = foodTerm, stats = stats,
+                priceGuide = priceGuide
             ) { emit(it) }
 
             // If a specific food was requested, only dishes that really are that food count. When there
@@ -94,7 +98,7 @@ object MacroMateAgent {
                     matchingDishes = runSearchPass(
                         LayaDecisionEngine.goalKeyword(decision.goal, forceVeg),
                         profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                        allergensList, cuisinePrefs, decision.budget, forceVeg
+                        allergensList, cuisinePrefs, decision.budget, forceVeg, priceGuide = priceGuide
                     ) { emit(it) }
                 }
             }
@@ -110,7 +114,7 @@ object MacroMateAgent {
                     emit(AgentState.Thinking("Retrying with refined query: \"$altTerm\""))
                     val retryDishes = runSearchPass(
                         altTerm, profile, remainingCalories, remainingProtein, remainingCarbs, remainingFat,
-                        allergensList, cuisinePrefs, decision.budget, forceVeg
+                        allergensList, cuisinePrefs, decision.budget, forceVeg, priceGuide = priceGuide
                     ) { emit(it) }
                     matchingDishes = (matchingDishes + retryDishes).distinctBy { it.id }
                 }
@@ -165,6 +169,25 @@ object MacroMateAgent {
         return words.isNotEmpty() && words.all { it in text }
     }
 
+    /**
+     * Price target for dish scoring. Precedence: a price the user typed ("under ₹300"), then
+     * today's safe budget allowance, then the restaurant's average price (the original
+     * behaviour, used whenever no budget is set). "Cheat"/"treat" queries ignore the budget.
+     */
+    internal fun resolvePriceGuide(query: String, budget: MealBudget): PriceGuide {
+        val explicit = EXPLICIT_PRICE.find(query.lowercase(Locale.ROOT))?.groupValues?.get(1)?.toDoubleOrNull()
+        if (explicit != null) return PriceGuide(explicit, PriceSource.USER_QUERY)
+        if (CHEAT_WORDS.containsMatchIn(query.lowercase(Locale.ROOT))) return PriceGuide.NONE
+        return when {
+            budget.usedUp -> PriceGuide(null, PriceSource.BUDGET_USED_UP)
+            budget.dailyAllowanceInr != null -> PriceGuide(budget.dailyAllowanceInr, PriceSource.DAILY_BUDGET)
+            else -> PriceGuide.NONE
+        }
+    }
+
+    private val EXPLICIT_PRICE = Regex("""(?:under|below|within|less than|upto|up to|max)\s*(?:rs\.?|₹|inr)?\s*(\d{2,5})""")
+    private val CHEAT_WORDS = Regex("""\b(cheat|treat|splurge|celebrat\w*)\b""")
+
     /** True once fewer than 2 dishes clear a reasonable macro-fit bar — worth trying a different search angle. */
     internal fun needsRetry(dishes: List<DishItem>): Boolean = dishes.count { it.score > 0.4 } < 2
 
@@ -187,6 +210,7 @@ object MacroMateAgent {
         strict: Boolean = false,
         foodTerm: String? = null,
         stats: SearchStats? = null,
+        priceGuide: PriceGuide = PriceGuide.NONE,
         emit: suspend (AgentState) -> Unit
     ): List<DishItem> {
         emit(AgentState.Thinking("Calling Tool: searchRestaurants(query=\"$searchTerm\", budget=$budget)"))
@@ -236,7 +260,7 @@ object MacroMateAgent {
                     targetProtein = mealTarget(remainingProtein, profile.dailyProteinG),
                     targetCarbs = mealTarget(remainingCarbs, profile.dailyCarbsG),
                     targetFat = mealTarget(remainingFat, profile.dailyFatG),
-                    targetPrice = restaurant.averagePrice
+                    targetPrice = priceGuide.targetPriceFor(restaurant.averagePrice)
                 )
 
                 // Boost for preferred cuisine
@@ -246,7 +270,8 @@ object MacroMateAgent {
                 val finalScore = if (cuisineMatch) Math.min(1.0, baseScore + 0.05) else baseScore
 
                 // AI Reasoning generator
-                val aiReasoning = generateAIReasoning(dish, profile, finalScore)
+                val aiReasoning = generateAIReasoning(dish, profile, finalScore) +
+                    priceGuide.overBudgetNote(dish.price).orEmpty()
 
                 matchingDishes.add(
                     dish.copy(

@@ -60,6 +60,7 @@ fun ChatScreen(
     val isAgentThinking by viewModel.isAgentThinking.collectAsState()
     val thinkingSteps by viewModel.thinkingSteps.collectAsState()
     val activeResults by viewModel.activeResults.collectAsState()
+    val mealSlotContext by viewModel.mealSlotContext.collectAsState()
     val cart by viewModel.cart.collectAsState()
 
     var inputQuery by remember { mutableStateOf("") }
@@ -395,7 +396,9 @@ fun ChatScreen(
                             onWhyRequired = {
                                 infoDialogDish = dish
                                 showInfoDialog = true
-                            }
+                            },
+                            logToSlotLabel = mealSlotContext?.label,
+                            onLogToSlot = { viewModel.logResultToSlot(dish) }
                         )
                     }
                 }
@@ -617,7 +620,9 @@ fun SwipeableMealCard(
     onAddToCart: () -> Unit,
     onIncrease: () -> Unit,
     onDecrease: () -> Unit,
-    onWhyRequired: () -> Unit
+    onWhyRequired: () -> Unit,
+    logToSlotLabel: String? = null, // set only for searches started from a Dietary Log slot
+    onLogToSlot: () -> Unit = {}
 ) {
     var offsetX by remember { mutableFloatStateOf(0f) }
     var dismissed by remember { mutableStateOf(false) }
@@ -730,6 +735,15 @@ fun SwipeableMealCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Why this?", color = TextSecondary, fontSize = 12.sp)
+                }
+
+                if (logToSlotLabel != null) {
+                    TextButton(
+                        onClick = onLogToSlot,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text("Log to $logToSlotLabel", color = NeonEmerald, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(4.dp))

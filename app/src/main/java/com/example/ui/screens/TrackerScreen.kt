@@ -44,13 +44,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.MacroLog
 import com.example.ui.theme.*
+import com.example.ui.viewmodel.DietaryLogViewModel
 import com.example.ui.viewmodel.MacroMateViewModel
 import kotlin.math.min
 
 @Composable
 fun TrackerScreen(
     viewModel: MacroMateViewModel,
+    dietVm: DietaryLogViewModel,
+    onOpenDietaryLog: () -> Unit,
+    onOpenProfile: () -> Unit,
 ) {
+    val budgetStatus by dietVm.budgetStatus.collectAsState()
     val todayLogs by viewModel.todayLogs.collectAsState()
     val allLogs by viewModel.allLogs.collectAsState()
     // Keyed on the collected state so the arcs recompute when Room emits new logs
@@ -59,6 +64,8 @@ fun TrackerScreen(
 
     // Dialog state for manual log
     var showManualDialog by remember { mutableStateOf(value = false) }
+    val suggestedSlot by dietVm.suggestedSlotNow.collectAsState()
+    var manualSlot by remember { mutableStateOf<com.example.domain.schedule.MealSlotType?>(null) }
 
     val limitCals = profile?.dailyCalories ?: 2000
     val limitProtein = profile?.dailyProteinG ?: 130
@@ -315,6 +322,15 @@ fun TrackerScreen(
                     limitKcal = limitCals,
                     weightKg = profile?.weightKg ?: 70.0,
                     heightCm = profile?.heightCm ?: 175.0
+                )
+            }
+
+            // Section 2c: Monthly food budget (safe-to-spend for Swiggy orders)
+            item {
+                BudgetCard(
+                    status = budgetStatus,
+                    onSetBudget = onOpenProfile,
+                    onOpenDietaryLog = onOpenDietaryLog
                 )
             }
 
@@ -681,6 +697,13 @@ fun TrackerScreen(
                         colors = TextFieldDefaults.colors(focusedContainerColor = SlateDark, unfocusedContainerColor = SlateDark, focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("Meal", fontSize = 13.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+                        MealSlotPicker(
+                            selected = manualSlot ?: suggestedSlot,
+                            onSelect = { manualSlot = it }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -693,7 +716,8 @@ fun TrackerScreen(
                         val cals = mealCals.toIntOrNull() ?: 0
                         val priceVal = mealCost.toDoubleOrNull() ?: 0.0
 
-                        viewModel.logManualMeal(nameStr, sourceName, p, c, f, cals, priceVal)
+                        viewModel.logManualMeal(nameStr, sourceName, p, c, f, cals, priceVal, mealSlot = (manualSlot ?: suggestedSlot)?.name)
+                        manualSlot = null
                         showManualDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald),

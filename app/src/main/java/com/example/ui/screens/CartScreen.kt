@@ -29,7 +29,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,7 +45,10 @@ import com.example.ui.viewmodel.MacroMateViewModel
 @Composable
 fun CartScreen(
     viewModel: MacroMateViewModel,
+    dietVm: com.example.ui.viewmodel.DietaryLogViewModel? = null,
 ) {
+    // Dietary Log section for items that don't have one yet: the meal due now / next.
+    val suggestedSlot by (dietVm?.suggestedSlotNow ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
     val cart by viewModel.cart.collectAsState()
     val totalMacros = viewModel.getCartMacros()
     val totalPrice = viewModel.getCartTotal()
@@ -133,8 +140,18 @@ fun CartScreen(
                         CartProductItemRow(
                             item = cartItem,
                             onQuantityIncrease = { viewModel.updateCartQuantity(cartItem.dish.id, 1) },
-                            onQuantityDecrease = { viewModel.updateCartQuantity(cartItem.dish.id, -1) }
-                        ) { viewModel.removeCartItem(cartItem.dish.id) }
+                            onQuantityDecrease = { viewModel.updateCartQuantity(cartItem.dish.id, -1) },
+                            onDelete = { viewModel.removeCartItem(cartItem.dish.id) },
+                            onToggleShared = { viewModel.toggleCartItemShared(cartItem.dish.id) }
+                        )
+                        if (!cartItem.isShared) {
+                            MealSlotPicker(
+                                selected = slotTypeOf(cartItem.mealSlot) ?: suggestedSlot,
+                                onSelect = { viewModel.setCartItemSlot(cartItem.dish.id, it.name) },
+                                prefix = "Log to · ",
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
                     }
 
                     // Cart Summary Block
@@ -220,9 +237,30 @@ fun CartScreen(
                             .padding(16.dp)
                             .navigationBarsPadding()
                     ) {
+                        val sections = cart.filterNot { it.isShared }
+                            .map { slotTypeOf(it.mealSlot) ?: suggestedSlot }.distinct()
+                        if (sections.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp)
+                            ) {
+                                Text(
+                                    if (sections.size == 1) "Log this order to" else "Mixed meals · set all to",
+                                    fontSize = 13.sp,
+                                    color = TextSecondary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                MealSlotPicker(
+                                    selected = sections.singleOrNull(),
+                                    onSelect = { viewModel.setCartSlotForAll(it.name) }
+                                )
+                            }
+                        }
                         Button(
                             onClick = {
-                                viewModel.confirmCartAndPlaceOrder { syncedToSwiggy, restaurantId ->
+                                viewModel.confirmCartAndPlaceOrder(defaultMealSlot = suggestedSlot?.name) { syncedToSwiggy, restaurantId ->
                                     Toast.makeText(
                                         context,
                                         if (syncedToSwiggy) "Items added to your Swiggy cart — opening Swiggy..."
@@ -273,7 +311,8 @@ fun CartProductItemRow(
     item: CartItem,
     onQuantityIncrease: () -> Unit,
     onQuantityDecrease: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleShared: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -301,11 +340,36 @@ fun CartProductItemRow(
                     fontWeight = FontWeight.Medium
                 )
                 Spacer(modifier = Modifier.height(4.dp))
+                // Shared items still cost money but don't count toward the user's macros.
                 Text(
-                    text = "P: ${item.dish.proteinG * item.quantity}g · ${item.dish.calories * item.quantity} kcal · ₹${(item.dish.price * item.quantity).toInt()}",
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                color = if (item.isShared) TextHint else NeonEmerald,
+                                textDecoration = if (item.isShared) TextDecoration.LineThrough else null
+                            )
+                        ) {
+                            append("P: ${item.dish.proteinG * item.quantity}g · ${item.dish.calories * item.quantity} kcal")
+                        }
+                        withStyle(SpanStyle(color = NeonEmerald)) {
+                            append(" · ₹${(item.dish.price * item.quantity).toInt()}")
+                        }
+                    },
                     fontSize = 11.sp,
-                    color = NeonEmerald,
                     fontWeight = FontWeight.Bold
+                )
+                if (item.isShared) {
+                    Text(
+                        text = "Not counted in your macros",
+                        fontSize = 10.sp,
+                        color = TextHint
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                SharedToggleChip(
+                    shared = item.isShared,
+                    onToggle = onToggleShared,
+                    modifier = Modifier.testTag("cart_shared_toggle_${item.dish.id}")
                 )
             }
 
@@ -392,6 +456,34 @@ fun CartProductItemRow(
                 }
             }
         }
+    }
+}
+
+/** Small two-state pill: "For me" (counts toward macros) or "Shared" (ordered for someone else). */
+@Composable
+private fun SharedToggleChip(shared: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (shared) SlateDark else LightTeal)
+            .border(1.dp, if (shared) SlateBorder else LightTeal, RoundedCornerShape(50))
+            .tactilePress(onToggle)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (shared) Icons.Default.Group else Icons.Default.Person,
+            contentDescription = null,
+            tint = if (shared) TextSecondary else NeonEmerald,
+            modifier = Modifier.size(12.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = if (shared) "Shared" else "For me",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (shared) TextSecondary else NeonEmerald
+        )
     }
 }
 

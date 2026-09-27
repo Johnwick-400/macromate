@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.OrderHistory
 import com.example.ui.theme.*
+import com.example.ui.viewmodel.DietaryLogViewModel
 import com.example.ui.viewmodel.MacroMateViewModel
 import org.json.JSONArray
 import java.text.SimpleDateFormat
@@ -52,6 +53,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 @Composable
 fun ProfileScreen(
     viewModel: MacroMateViewModel,
+    dietVm: DietaryLogViewModel,
 ) {
     val profile by viewModel.userProfile.collectAsState()
     val orders by viewModel.orderHistory.collectAsState()
@@ -242,6 +244,16 @@ fun ProfileScreen(
                 }
             }
 
+            // Section: BMI & BMR from the height, weight and age collected at onboarding
+            item {
+                BodyMetricsSection(dietVm = dietVm)
+            }
+
+            // Section 2: Monthly food budget
+            item {
+                MonthlyBudgetSection(dietVm = dietVm)
+            }
+
             // Section: Swiggy MCP Live Connection
             item {
                 val swiggyLinked by viewModel.swiggyLinked.collectAsState()
@@ -405,7 +417,6 @@ fun ProfileScreen(
             item { QwenModelCard(viewModel) }
 
             // Section: Budget & Meal Timing Settings
-            item { BudgetAndScheduleSettingsCard(viewModel) }
 
             // Section 3: Past Orders with Breakdown
             item {
@@ -730,105 +741,6 @@ private fun CurrentLocationConfirmDialog(
     )
 }
 
-@Composable
-fun BudgetAndScheduleSettingsCard(viewModel: MacroMateViewModel) {
-    val profile by viewModel.userProfile.collectAsState()
-    var budgetText by remember(profile?.monthlyBudgetInr) {
-        mutableStateOf(if ((profile?.monthlyBudgetInr ?: 0.0) > 0) "${profile?.monthlyBudgetInr?.toInt()}" else "")
-    }
-    var mealsCount by remember(profile?.mealsPerDay) {
-        mutableIntStateOf(profile?.mealsPerDay ?: 4)
-    }
-    var isEarlyCut by remember(profile?.isEarlyHeavyCut) {
-        mutableStateOf(profile?.isEarlyHeavyCut ?: false)
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SlateCard),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "BUDGET & MEAL TIMING",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = NeonEmerald,
-                letterSpacing = 1.2.sp
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-
-            OutlinedTextField(
-                value = budgetText,
-                onValueChange = { budgetText = it },
-                label = { Text("Monthly Food Budget Cap (₹)") },
-                placeholder = { Text("0 = Unrestricted") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text("Meals Per Day: $mealsCount", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(3, 4, 5, 6).forEach { count ->
-                    FilterChip(
-                        selected = mealsCount == count,
-                        onClick = { mealsCount = count },
-                        label = { Text("$count Meals") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = LightTeal,
-                            selectedLabelColor = NeonEmerald
-                        )
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Front-load Cut Calories", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = TextPrimary)
-                    Text("Bigger breakfast cuts evening cravings", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-                }
-                Switch(
-                    checked = isEarlyCut,
-                    onCheckedChange = { isEarlyCut = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = NeonEmerald, checkedTrackColor = LightTeal)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = {
-                    val budget = budgetText.toDoubleOrNull() ?: 0.0
-                    viewModel.updateBudgetAndScheduleSettings(
-                        monthlyBudgetInr = budget,
-                        mealsPerDay = mealsCount,
-                        wakeMinutes = profile?.wakeTimeMinutes ?: 420,
-                        sleepMinutes = profile?.sleepTimeMinutes ?: 1380,
-                        workoutMinutes = profile?.workoutTimeMinutes ?: 1080,
-                        isEarlyHeavyCut = isEarlyCut
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald)
-            ) {
-                Text("Save Budget & Schedule", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
 // Order History Item UI view list components
 @Composable
 fun OrderHistoryItemRow(order: OrderHistory) {
@@ -946,5 +858,216 @@ private fun parseJsonList(json: String?): List<String> {
         list
     } catch (_: Exception) {
         emptyList()
+    }
+}
+
+/** Monthly food budget editor. 0 or blank switches the budget off. */
+@Composable
+private fun MonthlyBudgetSection(dietVm: DietaryLogViewModel) {
+    val dietProfile by dietVm.profile.collectAsState()
+    val context = LocalContext.current
+    val saved = dietProfile?.monthlyBudgetInr ?: 0.0
+    var budgetText by remember { mutableStateOf("") }
+
+    // Prefill from the stored budget (blank when none is set).
+    LaunchedEffect(saved) {
+        budgetText = if (saved > 0.0) saved.toLong().toString() else ""
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("monthly_budget_section"),
+        colors = CardDefaults.cardColors(containerColor = SlateCard)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Monthly food budget",
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                fontSize = 16.sp
+            )
+            Text(
+                text = "Tracks Swiggy orders and outside spend against a monthly limit",
+                fontSize = 12.sp,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = budgetText,
+                    onValueChange = { input -> budgetText = input.filter { it.isDigit() }.take(7) },
+                    prefix = { Text("₹", color = OrangeSwiggy, fontWeight = FontWeight.Bold) },
+                    placeholder = { Text("e.g. 6000", color = TextHint) },
+                    supportingText = { Text("0 or empty turns the budget off", fontSize = 11.sp, color = TextHint) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = SlateDark,
+                        unfocusedContainerColor = SlateDark,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("monthly_budget_input")
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Button(
+                    onClick = {
+                        val value = budgetText.toDoubleOrNull() ?: 0.0
+                        dietVm.setMonthlyBudget(value)
+                        Toast.makeText(
+                            context,
+                            if (value > 0) "Monthly budget saved" else "Monthly budget turned off",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald),
+                    shape = RoundedCornerShape(10.dp),
+                    // Keeps the button aligned with the text field rather than its helper text.
+                    modifier = Modifier
+                        .padding(bottom = 22.dp)
+                        .testTag("save_budget_button")
+                ) {
+                    Text("Save", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BodyMetricsSection(dietVm: DietaryLogViewModel) {
+    val p by dietVm.profile.collectAsState()
+    val profile = p ?: return
+    val bmi = com.example.domain.BodyMetrics.bmi(profile.weightKg, profile.heightCm) ?: return
+    val adult = com.example.domain.BodyMetrics.bmiCategoryApplies(profile.age)
+    val category = com.example.domain.BodyMetrics.bmiCategory(bmi)
+    val healthy = com.example.domain.BodyMetrics.healthyWeightRangeKg(profile.heightCm)
+    val bmrExact = com.example.domain.BodyMetrics.bmrFor(profile.weightKg, profile.heightCm, profile.age, profile.sex)
+    val bmr = com.example.domain.BodyMetrics.bmrRange(profile.weightKg, profile.heightCm, profile.age)
+    val categoryColor = when (category) {
+        com.example.domain.BmiCategory.HEALTHY -> NeonEmerald
+        com.example.domain.BmiCategory.UNDERWEIGHT, com.example.domain.BmiCategory.OVERWEIGHT -> GoldenAmber
+        com.example.domain.BmiCategory.OBESE -> SoftRed
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("body_metrics_section"),
+        colors = CardDefaults.cardColors(containerColor = SlateCard)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Body metrics", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 16.sp)
+            Text(
+                "From your height (${profile.heightCm.toInt()} cm), weight (${"%.1f".format(profile.weightKg)} kg) and age (${profile.age})",
+                fontSize = 12.sp,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // BMI
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("BMI", fontSize = 11.sp, color = TextHint)
+                    Text("%.1f".format(bmi), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    if (adult) {
+                        Text(category.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = categoryColor)
+                    } else {
+                        Text("Adult ranges don't apply under 18", fontSize = 11.sp, color = TextSecondary)
+                    }
+                }
+                // BMR
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("BMR (at rest)", fontSize = 11.sp, color = TextHint)
+                    if (bmrExact != null) {
+                        Text("%,d".format(bmrExact), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        Text("kcal/day", fontSize = 12.sp, color = TextSecondary)
+                    } else if (bmr != null) {
+                        Text(
+                            "%,d–%,d".format(bmr.first, bmr.last),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Text("kcal/day · pick gender below", fontSize = 12.sp, color = TextSecondary)
+                    } else {
+                        Text("—", fontSize = 24.sp, color = TextHint)
+                    }
+                }
+            }
+            if (adult) {
+                Spacer(modifier = Modifier.height(12.dp))
+                BmiScale(bmi = bmi)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Gender", fontSize = 12.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+                listOf("Male", "Female").forEach { option ->
+                    val selected = profile.sex == option
+                    FilterChip(
+                        selected = selected,
+                        onClick = { if (!selected) dietVm.setSex(option) },
+                        label = { Text(option) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = NeonEmerald,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .testTag("profile_sex_$option")
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            if (adult && healthy != null) {
+                Text(
+                    "Healthy weight for your height: ${healthy.first}–${healthy.second} kg (BMI 18.5–24.9).",
+                    fontSize = 12.sp,
+                    color = TextSecondary
+                )
+            }
+            Text(
+                "BMR is the energy your body uses at complete rest (Mifflin-St Jeor). BMI can overstate " +
+                    "risk for very muscular people. Both are estimates, not a diagnosis.",
+                fontSize = 11.sp,
+                color = TextHint
+            )
+        }
+    }
+}
+
+/** WHO bands 16–35 with a marker at the user's BMI. */
+@Composable
+private fun BmiScale(bmi: Double) {
+    val min = 16.0
+    val max = 35.0
+    val bands = listOf(18.5 to GoldenAmber, 25.0 to NeonEmerald, 30.0 to GoldenAmber, max to SoftRed)
+    Column {
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+        ) {
+            val barTop = size.height * 0.35f
+            val barHeight = size.height * 0.4f
+            var start = min
+            bands.forEach { (end, color) ->
+                val x0 = ((start - min) / (max - min)).toFloat() * size.width
+                val x1 = ((end - min) / (max - min)).toFloat() * size.width
+                drawRect(color.copy(alpha = 0.55f), topLeft = androidx.compose.ui.geometry.Offset(x0, barTop),
+                    size = androidx.compose.ui.geometry.Size(x1 - x0, barHeight))
+                start = end
+            }
+            val x = ((bmi.coerceIn(min, max) - min) / (max - min)).toFloat() * size.width
+            drawCircle(TextPrimary, radius = size.height * 0.4f, center = androidx.compose.ui.geometry.Offset(x, size.height / 2))
+            drawCircle(SlateCard, radius = size.height * 0.2f, center = androidx.compose.ui.geometry.Offset(x, size.height / 2))
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf("Under", "Healthy", "Over", "Obese").forEach {
+                Text(it, fontSize = 10.sp, color = TextHint)
+            }
+        }
     }
 }

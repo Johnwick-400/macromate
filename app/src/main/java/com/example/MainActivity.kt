@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,7 +32,9 @@ import com.example.ui.theme.SlateCard
 import com.example.ui.theme.SlateDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextHint
+import com.example.ui.viewmodel.DietaryLogViewModel
 import com.example.ui.viewmodel.MacroMateViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MacroMateViewModel by viewModels()
@@ -96,6 +99,20 @@ class MainActivity : ComponentActivity() {
 fun MainWorkspaceScaffold(viewModel: MacroMateViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val cart by viewModel.cart.collectAsState()
+    val currentUserId by viewModel.currentUserId.collectAsState()
+
+    // Dietary Log + monthly budget state lives in its own ViewModel, bound to the signed-in user.
+    val dietVm: DietaryLogViewModel = viewModel()
+    LaunchedEffect(currentUserId) { dietVm.bindUser(currentUserId) }
+    // Feed today's safe food budget to the chat agent (no budget set = agent pricing unchanged).
+    val budgetForAgent by dietVm.budgetStatus.collectAsState()
+    LaunchedEffect(budgetForAgent) {
+        val status = budgetForAgent
+        viewModel.setMealBudget(
+            dailyAllowanceInr = status?.dailyAllowance,
+            usedUp = status != null && status.dailyAllowance == null
+        )
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -183,18 +200,25 @@ fun MainWorkspaceScaffold(viewModel: MacroMateViewModel) {
                     modifier = Modifier.testTag("cart_tab")
                 )
 
-                // Tab 4: Dietary Log / Schedule (Single-color Vector Drawable)
+                // Tab 4: Dietary Log (week strip, meal schedule, budget)
                 NavigationBarItem(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
                     icon = {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_dietary_log),
-                            contentDescription = "Dietary Log",
-                            modifier = Modifier.size(24.dp)
+                            painter = painterResource(R.drawable.ic_dietary_log),
+                            contentDescription = "Dietary Log"
                         )
                     },
-                    label = { Text("Dietary Log", fontSize = 10.sp, fontWeight = FontWeight.SemiBold) },
+                    label = {
+                        Text(
+                            "Dietary Log",
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = NeonEmerald,
                         selectedTextColor = NeonEmerald,
@@ -245,16 +269,22 @@ fun MainWorkspaceScaffold(viewModel: MacroMateViewModel) {
             ) { activeTab ->
                 when (activeTab) {
                     0 -> ChatScreen(viewModel = viewModel)
-                    1 -> TrackerScreen(viewModel = viewModel)
-                    2 -> CartScreen(viewModel = viewModel)
+                    1 -> TrackerScreen(
+                        viewModel = viewModel,
+                        dietVm = dietVm,
+                        onOpenDietaryLog = { selectedTab = 3 },
+                        onOpenProfile = { selectedTab = 4 }
+                    )
+                    2 -> CartScreen(viewModel = viewModel, dietVm = dietVm)
                     3 -> DietaryLogScreen(
                         viewModel = viewModel,
-                        onNavigateToChat = { query ->
+                        dietVm = dietVm,
+                        onFindOnSwiggy = { query, slot ->
+                            viewModel.sendMessage(query, slot)
                             selectedTab = 0
-                            viewModel.sendMessage(query)
                         }
                     )
-                    4 -> ProfileScreen(viewModel = viewModel)
+                    4 -> ProfileScreen(viewModel = viewModel, dietVm = dietVm)
                 }
             }
         }

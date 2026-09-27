@@ -28,46 +28,24 @@ data class UserProfile(
     val cuisinePrefsJson: String = "[]", // north Indian, south Indian, continental, keto
     val llmProvider: String = "Gemini", // Gemini, Claude
     val createdAt: Long = System.currentTimeMillis(),
-    val monthlyBudgetInr: Double = 0.0,
-    val mealsPerDay: Int = 4,
-    val wakeTimeMinutes: Int = 420,
-    val sleepTimeMinutes: Int = 1380,
-    val workoutTimeMinutes: Int = 1080,
-    val isEarlyHeavyCut: Boolean = false
-)
-
-@Entity(tableName = "daily_target_snapshot")
-data class DailyTargetSnapshot(
-    @PrimaryKey val date: String = "", // YYYY-MM-DD
-    val userId: String = "default_user",
-    val targetCalories: Int = 2000,
-    val targetProteinG: Int = 130,
-    val targetCarbsG: Int = 220,
-    val targetFatG: Int = 65,
-    val status: String = "", // FASTED, ESTIMATED, or empty
-    val estimatedCalories: Int? = null,
-    val estimatedProtein: Int? = null,
-    val createdAt: Long = System.currentTimeMillis()
-)
-
-@Entity(tableName = "weight_log")
-data class WeightLog(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val userId: String = "default_user",
-    val date: String = "", // YYYY-MM-DD
-    val weightKg: Double = 70.0,
-    val trendWeightKg: Double = 70.0,
-    val createdAt: Long = System.currentTimeMillis()
-)
-
-@Entity(tableName = "outside_spend_log")
-data class OutsideSpendLog(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val userId: String = "default_user",
-    val date: String = "", // YYYY-MM-DD
-    val amountInr: Double = 0.0,
-    val note: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    // --- Dietary Log + Monthly Budget (schema v3, extended in v4) ---
+    val monthlyBudgetInr: Double = 0.0,     // 0 = no budget set; budget features stay off
+    val mealsPerDay: Int = 4,               // 2..6, user preference (meal count doesn't change outcomes)
+    val wakeTimeMinutes: Int = 420,         // minutes after midnight (07:00)
+    val sleepTimeMinutes: Int = 1380,       // 23:00
+    val workoutTimeMinutes: Int = 1080,     // 18:00; only used when workoutEnabled
+    val isEarlyHeavyCut: Boolean = false,   // front-loaded template: bigger breakfast, same kcal
+    // v4
+    val budgetStartDate: String = "",       // yyyy-MM-dd the budget was first set; "" = whole month
+    val workoutEnabled: Boolean = false,    // false = no training anchor in the schedule
+    val dayEndsAtHour: Int = 4,             // meals before this hour count toward the previous day
+    val remindersEnabled: Boolean = false,
+    // Optional health check: any of these pauses carry-over and fasting nudges (see SafetyRules)
+    val isPregnantOrLactating: Boolean = false,
+    val onDiabetesMeds: Boolean = false,
+    val edHistory: Boolean = false,
+    // v6
+    val sex: String = ""                    // "Male" | "Female" | "" (not set: older accounts)
 )
 
 @Entity(tableName = "macro_log")
@@ -83,8 +61,57 @@ data class MacroLog(
     val calories: Int = 0,
     val price: Double = 0.0,
     val source: String = "swiggy", // swiggy / manual
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val mealSlot: String? = null,  // BREAKFAST, LUNCH, ... ; null = assign by time of day
+    val isShared: Boolean = false  // ordered for someone else: price counts toward spend, macros don't
 )
+
+/**
+ * One row per (user, logical day). Snapshots the targets in force that day so later goal
+ * changes never rewrite history, and records what the user told us about the day.
+ * Replaces v3's daily_target_snapshot, whose primary key (date only) mixed users up.
+ */
+@Entity(tableName = "day_record", primaryKeys = ["userId", "dateString"])
+data class DayRecord(
+    val userId: String,
+    val dateString: String,
+    val status: String = DayStatus.AUTO.name,  // AUTO = derive from logs; or FASTED / ESTIMATED / COMPLETE / SKIPPED
+    val estimatedKcal: Int? = null,            // set when status = ESTIMATED
+    val targetKcal: Int,
+    val targetProteinG: Int,
+    val targetCarbsG: Int,
+    val targetFatG: Int,
+    val goal: String,
+    val noSpendConfirmed: Boolean = false,     // user confirmed no food spend outside the app that day
+    val waterGlasses: Int = 0                  // glasses of water ticked that day
+)
+
+/** What the user has told us about a day. AUTO means "classify from the logged meals". */
+enum class DayStatus { AUTO, COMPLETE, FASTED, ESTIMATED, SKIPPED }
+
+@Entity(tableName = "weight_log")
+data class WeightLog(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val userId: String = "default_user",
+    val date: String = "", // YYYY-MM-DD
+    val weightKg: Double = 70.0,
+    val trendWeightKg: Double = 70.0,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/** Food spend the app can't see on its own: outside orders, Swiggy fees/taxes, month-end reconcile. */
+@Entity(tableName = "outside_spend_log")
+data class OutsideSpendLog(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val userId: String = "default_user",
+    val date: String = "", // YYYY-MM-DD
+    val amountInr: Double = 0.0,
+    val note: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val kind: String = SpendKind.OUTSIDE_ORDER.name // v4: OUTSIDE_ORDER | FEES | RECONCILE
+)
+
+enum class SpendKind { OUTSIDE_ORDER, FEES, RECONCILE }
 
 @Entity(tableName = "order_history")
 data class OrderHistory(
@@ -129,8 +156,13 @@ data class Restaurant(
 
 data class CartItem(
     val dish: DishItem,
-    var quantity: Int
+    var quantity: Int,
+    val isShared: Boolean = false, // ordered for someone else: counts toward spend, not macros
+    val mealSlot: String? = null   // Dietary Log slot this dish was searched for (logged into it on order)
 )
+
+/** The Dietary Log slot a chat search was started from ("Find on Swiggy"). */
+data class MealSlotContext(val slot: String, val label: String)
 
 data class SwiggyAddress(
     val id: String,

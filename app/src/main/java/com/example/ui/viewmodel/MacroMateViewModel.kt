@@ -227,7 +227,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
     // Emits current yyyy-MM-dd, re-checking each minute so the tracker rolls over at midnight
     // even while the app stays open. distinctUntilChanged → only re-emits when the date changes.
     private fun todayString(): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        com.example.domain.DayClock.logicalDateString(dayEndsAtHour = userProfile.value?.dayEndsAtHour ?: 4)
 
     private val currentDate: StateFlow<String> = flow {
         while (true) {
@@ -293,138 +293,6 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // --- Outside Spends & Budget State ---
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val outsideSpends: StateFlow<List<OutsideSpendLog>> = _currentUserId
-        .flatMapLatest { userId ->
-            if (userId == null) flowOf(emptyList()) else repository.getOutsideSpendsFlow(userId)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val budgetStatus: StateFlow<BudgetStatus> = combine(userProfile, orderHistory, outsideSpends) { profile, orders, spends ->
-        val budget = profile?.monthlyBudgetInr ?: 0.0
-        val monthlySpend = FoodBudgetCalculator.computeMonthlySpend(orders, spends)
-        FoodBudgetCalculator.evaluateBudget(budget, monthlySpend)
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        BudgetStatus(0.0, 0.0, 0.0, 0, null, false, "Monthly budget not set")
-    )
-
-    // --- Dynamic Meal Schedule Plan State ---
-    val dailySchedulePlan: StateFlow<DailySchedulePlan> = userProfile.map { profile ->
-        if (profile == null) {
-            MealScheduleCalculator.buildSchedule(70.0, 2000, 130, 220, 65)
-        } else {
-            MealScheduleCalculator.buildSchedule(
-                weightKg = profile.weightKg,
-                dailyCalories = profile.dailyCalories,
-                dailyProteinG = profile.dailyProteinG,
-                dailyCarbsG = profile.dailyCarbsG,
-                dailyFatG = profile.dailyFatG,
-                mealsPerDay = profile.mealsPerDay,
-                wakeMinutes = profile.wakeTimeMinutes,
-                sleepMinutes = profile.sleepTimeMinutes,
-                workoutMinutes = profile.workoutTimeMinutes,
-                isEarlyHeavyCut = profile.isEarlyHeavyCut
-            )
-        }
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        MealScheduleCalculator.buildSchedule(70.0, 2000, 130, 220, 65)
-    )
-
-    // --- Weight Logs & Daily Snapshots ---
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val weightLogs: StateFlow<List<WeightLog>> = _currentUserId
-        .flatMapLatest { userId ->
-            if (userId == null) flowOf(emptyList()) else repository.getWeightLogsFlow(userId)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val dailySnapshots: StateFlow<List<DailyTargetSnapshot>> = _currentUserId
-        .flatMapLatest { userId ->
-            if (userId == null) flowOf(emptyList()) else repository.getAllDailyTargetSnapshotsFlow(userId)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    fun recordWeight(weightKg: Double) {
-        val uid = _currentUserId.value ?: return
-        viewModelScope.launch {
-            val dateStr = todayString()
-            repository.saveWeightLog(
-                WeightLog(
-                    userId = uid,
-                    date = dateStr,
-                    weightKg = weightKg,
-                    trendWeightKg = weightKg
-                )
-            )
-            userProfile.value?.let { current ->
-                repository.saveUserProfile(current.copy(weightKg = weightKg))
-            }
-        }
-    }
-
-    fun recordOutsideSpend(amountInr: Double, note: String) {
-        val uid = _currentUserId.value ?: return
-        viewModelScope.launch {
-            repository.saveOutsideSpend(
-                OutsideSpendLog(
-                    userId = uid,
-                    date = todayString(),
-                    amountInr = amountInr,
-                    note = note
-                )
-            )
-        }
-    }
-
-    fun recordDayStatus(date: String, status: String, estimatedCal: Int? = null, estimatedP: Int? = null) {
-        val uid = _currentUserId.value ?: return
-        viewModelScope.launch {
-            val profile = userProfile.value
-            repository.saveDailyTargetSnapshot(
-                DailyTargetSnapshot(
-                    date = date,
-                    userId = uid,
-                    targetCalories = profile?.dailyCalories ?: 2000,
-                    targetProteinG = profile?.dailyProteinG ?: 130,
-                    targetCarbsG = profile?.dailyCarbsG ?: 220,
-                    targetFatG = profile?.dailyFatG ?: 65,
-                    status = status,
-                    estimatedCalories = estimatedCal,
-                    estimatedProtein = estimatedP
-                )
-            )
-        }
-    }
-
-    fun updateBudgetAndScheduleSettings(
-        monthlyBudgetInr: Double,
-        mealsPerDay: Int,
-        wakeMinutes: Int,
-        sleepMinutes: Int,
-        workoutMinutes: Int,
-        isEarlyHeavyCut: Boolean
-    ) {
-        viewModelScope.launch {
-            userProfile.value?.let { current ->
-                val updated = current.copy(
-                    monthlyBudgetInr = monthlyBudgetInr,
-                    mealsPerDay = mealsPerDay,
-                    wakeTimeMinutes = wakeMinutes,
-                    sleepTimeMinutes = sleepMinutes,
-                    workoutTimeMinutes = workoutMinutes,
-                    isEarlyHeavyCut = isEarlyHeavyCut
-                )
-                repository.saveUserProfile(updated)
-            }
-        }
-    }
-
     // --- Chat & Agent UI State ---
     private val _chatMessages = MutableStateFlow<List<ChatMessage>>(
         listOf(
@@ -482,7 +350,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun signUp(nameText: String, email: String, passwordText: String, onResult: (Boolean) -> Unit) {
+    fun signUp(nameText: String, email: String, passwordText: String, sex: String = "", onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             _authError.value = null
             val trimmedName = nameText.trim()
@@ -527,7 +395,8 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                     dailyCarbsG = 220,
                     dailyFatG = 65,
                     allergiesJson = "[]",
-                    cuisinePrefsJson = "[]"
+                    cuisinePrefsJson = "[]",
+                    sex = sex
                 )
                 repository.saveUserProfile(newProfile)
                 onResult(true)
@@ -594,8 +463,10 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 calculateMacrosForGoal(weight, goal)
             }
 
-            val current = userProfile.value
-            val updatedProfile = (current ?: UserProfile(userId = userId)).copy(
+            // copy() keeps fields this screen doesn't edit (budget, schedule prefs, createdAt, ...)
+            val base = userProfile.value?.takeIf { it.userId == userId } ?: UserProfile(userId = userId)
+            val updatedProfile = base.copy(
+                userId = userId,
                 name = name,
                 age = age,
                 weightKg = weight,
@@ -606,8 +477,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 dailyCarbsG = macros.carbs,
                 dailyFatG = macros.fat,
                 allergiesJson = JSONArray(allergies).toString(),
-                cuisinePrefsJson = JSONArray(cuisinePrefs).toString(),
-                llmProvider = current?.llmProvider ?: "Gemini"
+                cuisinePrefsJson = JSONArray(cuisinePrefs).toString()
             )
             repository.saveUserProfile(updatedProfile)
         }
@@ -633,8 +503,26 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     data class ConsumedMacros(val calories: Int, val protein: Int, val carbs: Int, val fat: Int)
 
+    // --- Monthly budget guide for the agent (set from the Dietary Log's BudgetStatus) ---
+    private var mealBudget = com.example.data.repository.MealBudget.NONE
+
+    /** [dailyAllowanceInr] null + [usedUp] false = no budget set: agent keeps its original pricing. */
+    fun setMealBudget(dailyAllowanceInr: Double?, usedUp: Boolean) {
+        mealBudget = com.example.data.repository.MealBudget(dailyAllowanceInr, usedUp)
+    }
+
     // --- Chat UI & ReAct Agent Simulation/Online Handling ---
-    fun sendMessage(text: String) {
+    // Set when a search comes from a Dietary Log slot; any normal chat message clears it.
+    private val _mealSlotContext = MutableStateFlow<MealSlotContext?>(null)
+    val mealSlotContext: StateFlow<MealSlotContext?> = _mealSlotContext.asStateFlow()
+
+    fun sendMessage(text: String, slotContext: MealSlotContext? = null) {
+        // A search from a Dietary Log slot carries its section; otherwise read it from the words
+        // ("dinner", "snacks", "tiffin"...). Voice input arrives here as text, so it's covered too.
+        if (text.isNotBlank()) {
+            _mealSlotContext.value = slotContext
+                ?: com.example.domain.schedule.MealIntent.detect(text)?.let { MealSlotContext(it.name, it.label) }
+        }
         if (text.isBlank()) return
 
         // 1. Append User Message
@@ -661,7 +549,8 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 remainingCalories = remCal,
                 remainingProtein = remP,
                 remainingCarbs = remC,
-                remainingFat = remF
+                remainingFat = remF,
+                budget = mealBudget
             ).collect { agentState ->
                 when (agentState) {
                     is AgentState.Thinking -> {
@@ -723,7 +612,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             if (existing != null) {
                 current.map { if (it.dish.id == dish.id) it.copy(quantity = it.quantity + 1) else it }
             } else {
-                current + CartItem(dish, 1)
+                current + CartItem(dish, 1, mealSlot = _mealSlotContext.value?.slot)
             }
         }
     }
@@ -747,6 +636,22 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Dietary Log section for one basket item. */
+    fun setCartItemSlot(dishId: String, mealSlot: String) {
+        _cart.update { current -> current.map { if (it.dish.id == dishId) it.copy(mealSlot = mealSlot) else it } }
+    }
+
+    /** Same section for every item in the basket. */
+    fun setCartSlotForAll(mealSlot: String) {
+        _cart.update { current -> current.map { it.copy(mealSlot = mealSlot) } }
+    }
+
+    fun toggleCartItemShared(dishId: String) {
+        _cart.update { current ->
+            current.map { if (it.dish.id == dishId) it.copy(isShared = !it.isShared) else it }
+        }
+    }
+
     fun clearCart() {
         _cart.value = emptyList()
     }
@@ -756,7 +661,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         var protein = 0
         var carbs = 0
         var fat = 0
-        cart.value.forEach { item ->
+        cart.value.filterNot { it.isShared }.forEach { item ->
             val q = item.quantity
             cals += item.dish.calories * q
             protein += item.dish.proteinG * q
@@ -772,7 +677,11 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** [onComplete] reports whether the cart was actually pushed to the user's real Swiggy
      *  cart (true) vs. only logged locally (false — not connected, or the sync call failed). */
-    fun confirmCartAndPlaceOrder(onComplete: (syncedToSwiggy: Boolean, restaurantId: String?) -> Unit = { _, _ -> }) {
+    /** [defaultMealSlot] is used for items without their own section (the basket's "Log to" choice). */
+    fun confirmCartAndPlaceOrder(
+        defaultMealSlot: String? = null,
+        onComplete: (syncedToSwiggy: Boolean, restaurantId: String?) -> Unit = { _, _ -> }
+    ) {
         viewModelScope.launch {
             val items = cart.value
             if (items.isEmpty()) { onComplete(false, null); return@launch }
@@ -804,19 +713,23 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             repository.saveOrderHistory(newOrder)
 
             // 3. Log these items to today's macros
-            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val todayStr = todayString()
             items.forEach { item ->
+                // Shared items (ordered for someone else) count toward spend but not the user's macros.
+                val mine = if (item.isShared) 0 else 1
                 val logs = MacroLog(
                     userId = userId,
                     dateString = todayStr,
                     name = item.dish.name,
                     restaurant = item.dish.restaurantName,
-                    proteinG = item.dish.proteinG * item.quantity,
-                    carbsG = item.dish.carbsG * item.quantity,
-                    fatG = item.dish.fatG * item.quantity,
-                    calories = item.dish.calories * item.quantity,
+                    proteinG = item.dish.proteinG * item.quantity * mine,
+                    carbsG = item.dish.carbsG * item.quantity * mine,
+                    fatG = item.dish.fatG * item.quantity * mine,
+                    calories = item.dish.calories * item.quantity * mine,
                     price = item.dish.price * item.quantity,
-                    source = "swiggy"
+                    source = "swiggy",
+                    isShared = item.isShared,
+                    mealSlot = item.mealSlot ?: defaultMealSlot
                 )
                 repository.saveMacroLog(logs)
             }
@@ -832,13 +745,25 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                     .maxByOrNull { it.value.size }
                 if (largestRestaurant != null) {
                     try {
-                        SwiggyMcpClient.updateCart(
+                        val toPay = SwiggyMcpClient.updateCart(
                             restaurantId = largestRestaurant.key,
                             restaurantName = largestRestaurant.value.first().dish.restaurantName,
                             items = largestRestaurant.value.map { it.dish.id to it.quantity }
                         )
                         syncedToSwiggy = true
                         syncedRestaurantId = largestRestaurant.key
+                        // Swiggy's "to pay" includes delivery, platform fee and GST; record the
+                        // difference from menu prices so monthly spend reflects what's really paid.
+                        val menuTotal = largestRestaurant.value.sumOf { it.dish.price * it.quantity }
+                        if (toPay != null && toPay > menuTotal) {
+                            repository.saveOutsideSpend(
+                                OutsideSpendLog(
+                                    userId = userId, date = todayStr,
+                                    amountInr = toPay - menuTotal, kind = SpendKind.FEES.name,
+                                    note = "Swiggy fees & taxes ($orderId)"
+                                )
+                            )
+                        }
                     } catch (e: Exception) {
                         Log.w("MacroMateViewModel", "Failed to sync cart to Swiggy", e)
                     }
@@ -964,10 +889,30 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     // --- Manual Meal Logging ---
-    fun logManualMeal(name: String, company: String, protein: Int, carbs: Int, fat: Int, calories: Int, cost: Double) {
+    /**
+     * "Log to Breakfast" on a chat result opened from the Dietary Log: records the dish straight
+     * into that slot (for food ordered or eaten outside the basket flow). Its price counts toward
+     * the monthly budget like any other logged meal.
+     */
+    fun logResultToSlot(dish: DishItem) {
+        val context = _mealSlotContext.value ?: return
+        logManualMeal(
+            name = dish.name, company = dish.restaurantName, protein = dish.proteinG, carbs = dish.carbsG,
+            fat = dish.fatG, calories = dish.calories, cost = dish.price, mealSlot = context.slot
+        )
+        dismissResult(dish.id)
+        _chatMessages.update { old ->
+            old + ChatMessage(sender = "SYSTEM", content = "Logged ${dish.name} to ${context.label} in your Dietary Log.")
+        }
+    }
+
+    fun logManualMeal(
+        name: String, company: String, protein: Int, carbs: Int, fat: Int, calories: Int, cost: Double,
+        mealSlot: String? = null
+    ) {
         viewModelScope.launch {
             val userId = _currentUserId.value ?: "default_user"
-            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val todayStr = todayString()
             val log = MacroLog(
                 userId = userId,
                 dateString = todayStr,
@@ -978,7 +923,8 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
                 fatG = fat,
                 calories = calories,
                 price = cost,
-                source = "manual"
+                source = "manual",
+                mealSlot = mealSlot
             )
             repository.saveMacroLog(log)
         }
@@ -995,6 +941,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             val userId = _currentUserId.value ?: "default_user"
             repository.clearMacroLogs(userId)
             repository.clearOrderHistory(userId)
+            repository.clearDietaryData(userId)
             _chatMessages.value = listOf(
                 ChatMessage(
                     sender = "AI",
