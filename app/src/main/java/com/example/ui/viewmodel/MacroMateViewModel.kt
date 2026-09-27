@@ -11,6 +11,7 @@ import android.net.Uri
 import com.example.data.repository.AgentState
 import com.example.data.repository.*
 import com.example.data.repository.DeviceLocationClient
+import com.example.data.repository.AgentLlm
 import com.example.data.repository.GeminiNanoClient
 import com.example.data.repository.LayaDecisionEngine
 import com.example.data.repository.MacroMateRepository
@@ -848,8 +849,9 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Estimates macros for a free-text food description (e.g. "2 idlis and sambar"), so manual
-     * logging doesn't require the user to already know the exact macro numbers. Same three-tier
-     * fallback as [estimateMacrosFromImage]: on-device Gemini Nano -> cloud Gemini -> null.
+     * logging doesn't require the user to already know the exact macro numbers. Local models are
+     * tried before any network call: on-device Gemini Nano -> on-device Qwen -> cloud Gemini
+     * (only if neither local model is available) -> null.
      */
     fun estimateMacrosFromDescription(description: String, onResult: (ConsumedMacros?) -> Unit) {
         if (description.isBlank()) {
@@ -863,7 +865,7 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
             val result = try {
                 GeminiNanoClient.estimateMacrosFromText(prompt)?.let {
                     ConsumedMacros(calories = it.calories, protein = it.proteinG, carbs = it.carbsG, fat = it.fatG)
-                } ?: estimateMacrosFromDescriptionViaCloud(prompt)
+                } ?: estimateMacrosFromDescriptionViaAgent(prompt)
             } catch (e: Exception) {
                 null
             }
@@ -872,10 +874,14 @@ class MacroMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun estimateMacrosFromDescriptionViaCloud(prompt: String): ConsumedMacros? {
-        if (!RestGeminiClient.isApiKeyAvailable()) return null
-        val json = RestGeminiClient.generateJson(
-            prompt = "$prompt\nReturn JSON: {\"calories\": 320, \"proteinG\": 20, \"carbsG\": 30, \"fatG\": 10}",
+    private suspend fun estimateMacrosFromDescriptionViaAgent(prompt: String): ConsumedMacros? {
+        // No literal example numbers here — a small on-device model tends to echo them back
+        // verbatim instead of estimating (confirmed: it returned exactly 320/20/30/10 regardless
+        // of the food described). Naming the keys and their units is enough for cloud Gemini too.
+        val json = AgentLlm.generateJson(
+            prompt = "$prompt\nRespond with a JSON object with these integer keys: " +
+                    "calories (kcal), proteinG (grams), carbsG (grams), fatG (grams). " +
+                    "Use your own estimate for each — never copy numbers from this instruction.",
             systemInstruction = "You are a nutritionist estimating meal macros from a plain-language description. Respond with JSON only."
         )
         return json?.let {

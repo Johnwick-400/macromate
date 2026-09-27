@@ -437,7 +437,7 @@ object SwiggyMcpClient {
         )
         val dishes = parseMenuDishes(data, restaurantId)
         if (dishes.isEmpty()) return@withContext dishes
-        estimateMacrosWithGemini(dishes) ?: dishes.map { it.withHeuristicMacros() }
+        estimateMacrosWithAi(dishes) ?: dishes.map { it.withHeuristicMacros() }
     }
 
     // ---------------------------------------------------------------
@@ -561,11 +561,12 @@ object SwiggyMcpClient {
     // Macro estimation ("getMenuAndEstimateMacros")
     // ---------------------------------------------------------------
 
-    /** One batched Gemini call per menu; null when no API key / parse failure. */
-    private suspend fun estimateMacrosWithGemini(dishes: List<DishItem>): List<DishItem>? {
-        if (AgentLlm.mode() != AgentLlm.Mode.CLOUD) return null // local Qwen is too slow for whole menus: use the heuristic
+    /** One batched call per menu via [AgentLlm] (on-device Qwen when installed, cloud Gemini
+     *  only as a fallback, heuristic if neither is available). */
+    private suspend fun estimateMacrosWithAi(dishes: List<DishItem>): List<DishItem>? {
+        if (AgentLlm.mode() == AgentLlm.Mode.NONE) return null
         val menu = dishes.mapIndexed { i, d -> "$i. ${d.name} — ${d.description.take(120)}" }.joinToString("\n")
-        val json = RestGeminiClient.generateJson(
+        val json = AgentLlm.generateJson(
             prompt = "Estimate nutrition per single serving for each restaurant dish below. " +
                     "Return JSON: {\"items\":[{\"index\":0,\"calories\":320,\"proteinG\":25,\"carbsG\":30,\"fatG\":10}, ...]} " +
                     "with exactly one entry per dish, in order.\n$menu",
